@@ -1,0 +1,72 @@
+{
+  "interactionModel": {
+    "languageModel": {
+      "invocationName": "oura health",
+      "intents": [
+        {
+          "name": "SleepScoreIntent",
+          "samples": [
+            "what was my sleep score",
+            "how did I sleep",
+            "tell me my sleep score",
+            "sleep score from last night",
+            "what's my sleep score",
+            "how was my sleep",
+            "sleep score",
+            "did I sleep well"
+          ]
+        },
+        {
+          "name": "ReadinessScoreIntent",
+          "samples": [
+            "what is my readiness score",
+            "how ready am I",
+            "tell me my readiness score",
+            "what's my readiness score",
+            "readiness score",
+            "am I ready for the day",
+            "how is my readiness"
+          ]
+        },
+        {
+          "name": "ActivityScoreIntent",
+          "samples": [
+            "what was my activity score",
+            "how active was I",
+            "tell me my activity score",
+            "what's my activity score",
+            "activity score",
+            "how many steps did I take",
+            "my activity"
+          ]
+        },
+        {
+          "name": "HealthSummaryIntent",
+          "samples": [
+            "health summary",
+            "give me my health summary",
+            "how was my health",
+            "summary",
+            "overall health",
+            "health report",
+            "how am I doing",
+            "health overview",
+            "tell me about my health"
+          ]
+        },
+        {
+          "name": "AMAZON.CancelIntent",
+          "samples": []
+        },
+        {
+          "name": "AMAZON.HelpIntent",
+          "samples": []
+        },
+        {
+          "name": "AMAZON.StopIntent",
+          "samples": []
+        }
+      ]
+    }
+  }
+}

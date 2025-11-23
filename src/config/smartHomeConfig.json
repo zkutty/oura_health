@@ -1,0 +1,53 @@
+{
+  "enabled": true,
+  "actions": [
+    {
+      "id": "poor-sleep-dim-lights",
+      "name": "Dim lights on poor sleep",
+      "device": "bedroom_lights",
+      "action": "dim_to_30_percent",
+      "condition": {
+        "metric": "sleep",
+        "operator": "lt",
+        "threshold": 70,
+        "subMetric": "score"
+      }
+    },
+    {
+      "id": "excellent-readiness-bright-lights",
+      "name": "Bright lights on excellent readiness",
+      "device": "bedroom_lights",
+      "action": "set_to_100_percent",
+      "condition": {
+        "metric": "readiness",
+        "operator": "gte",
+        "threshold": 85,
+        "subMetric": "score"
+      }
+    },
+    {
+      "id": "low-readiness-gentle-alarm",
+      "name": "Gentle alarm on low readiness",
+      "device": "alarm",
+      "action": "gentle_mode",
+      "condition": {
+        "metric": "readiness",
+        "operator": "lt",
+        "threshold": 60,
+        "subMetric": "score"
+      }
+    },
+    {
+      "id": "combined-health-set-thermostat",
+      "name": "Adjust thermostat based on overall health",
+      "device": "thermostat",
+      "action": "set_comfortable",
+      "condition": {
+        "metric": "combined",
+        "operator": "gte",
+        "threshold": 75
+      }
+    }
+  ],
+  "alexaEndpoint": null
+}
