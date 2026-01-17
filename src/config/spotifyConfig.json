@@ -1,0 +1,118 @@
+{
+  "enabled": true,
+  "targetPlaylistId": "",
+  "targetPlaylistName": "Daily Health Mix",
+  "playlistSize": 30,
+  "energyMappings": [
+    {
+      "level": "very_high",
+      "name": "Very High Energy (Peak Performance)",
+      "conditions": {
+        "readinessThreshold": 90,
+        "sleepThreshold": 90,
+        "combinedOperator": "and"
+      },
+      "audioFeatureTargets": {
+        "energy": { "min": 0.7, "max": 1.0, "target": 0.9 },
+        "valence": { "min": 0.6, "max": 1.0, "target": 0.85 },
+        "tempo": { "min": 130, "max": 180, "target": 155 },
+        "acousticness": { "min": 0.0, "max": 0.2, "target": 0.05 }
+      },
+      "genres": ["rock", "hard-rock", "metal", "edm", "drum-and-bass", "power-pop"],
+      "moodKeywords": ["intense", "explosive", "adrenaline", "power", "epic"]
+    },
+    {
+      "level": "high",
+      "name": "High Energy (Active & Motivated)",
+      "conditions": {
+        "readinessThreshold": 85,
+        "sleepThreshold": 85,
+        "combinedOperator": "or"
+      },
+      "audioFeatureTargets": {
+        "energy": { "min": 0.6, "max": 0.9, "target": 0.75 },
+        "valence": { "min": 0.5, "max": 0.9, "target": 0.75 },
+        "tempo": { "min": 120, "max": 150, "target": 135 },
+        "acousticness": { "min": 0.0, "max": 0.3, "target": 0.1 }
+      },
+      "genres": ["workout", "dance", "electronic", "house", "pop", "hip-hop"],
+      "moodKeywords": ["energetic", "pumped", "powerful", "dynamic", "uplifting"]
+    },
+    {
+      "level": "moderate",
+      "name": "Moderate Energy (Balanced & Steady)",
+      "conditions": {
+        "readinessThreshold": 75,
+        "sleepThreshold": 80,
+        "combinedOperator": "and"
+      },
+      "audioFeatureTargets": {
+        "energy": { "min": 0.4, "max": 0.7, "target": 0.55 },
+        "valence": { "min": 0.4, "max": 0.8, "target": 0.6 },
+        "tempo": { "min": 100, "max": 130, "target": 115 },
+        "acousticness": { "min": 0.0, "max": 0.6, "target": 0.3 }
+      },
+      "genres": ["pop", "indie-pop", "alternative", "r-n-b", "funk", "disco"],
+      "moodKeywords": ["upbeat", "positive", "groovy", "feel-good", "balanced"]
+    },
+    {
+      "level": "low",
+      "name": "Low Energy (Calm & Comfortable)",
+      "conditions": {
+        "readinessThreshold": 70,
+        "sleepThreshold": 75,
+        "combinedOperator": "or"
+      },
+      "audioFeatureTargets": {
+        "energy": { "min": 0.2, "max": 0.5, "target": 0.35 },
+        "valence": { "min": 0.3, "max": 0.7, "target": 0.5 },
+        "tempo": { "min": 80, "max": 110, "target": 95 },
+        "acousticness": { "min": 0.2, "max": 0.8, "target": 0.5 }
+      },
+      "genres": ["indie", "folk", "jazz", "soul", "lo-fi", "singer-songwriter"],
+      "moodKeywords": ["mellow", "easy", "smooth", "laid-back", "chill"]
+    },
+    {
+      "level": "very_low",
+      "name": "Very Low Energy (Rest & Recovery)",
+      "conditions": {
+        "readinessThreshold": 60,
+        "sleepThreshold": 70,
+        "combinedOperator": "or"
+      },
+      "audioFeatureTargets": {
+        "energy": { "min": 0.0, "max": 0.3, "target": 0.15 },
+        "valence": { "min": 0.2, "max": 0.6, "target": 0.4 },
+        "tempo": { "min": 60, "max": 100, "target": 80 },
+        "acousticness": { "min": 0.3, "max": 1.0, "target": 0.7 }
+      },
+      "genres": ["ambient", "chill", "acoustic", "meditation", "sleep", "classical"],
+      "moodKeywords": ["calm", "peaceful", "relaxing", "gentle", "soft", "soothing"]
+    }
+  ],
+  "sources": {
+    "savedTracks": {
+      "enabled": true,
+      "weight": 0.4
+    },
+    "userPlaylists": {
+      "enabled": true,
+      "weight": 0.3,
+      "excludeIds": []
+    },
+    "recommendations": {
+      "enabled": true,
+      "weight": 0.2
+    },
+    "genrePlaylists": {
+      "enabled": true,
+      "weight": 0.1
+    }
+  },
+  "schedule": {
+    "initialTime": "7:45",
+    "retryIntervalMinutes": 60,
+    "maxRetries": 5,
+    "timeoutHours": 12
+  }
+}

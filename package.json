@@ -8,7 +8,8 @@
     "start": "node dist/index.js",
     "dev": "ts-node src/index.ts",
     "watch": "tsc --watch",
-    "test-api": "ts-node scripts/test-api.ts"
+    "test-api": "ts-node scripts/test-api.ts",
+    "setup-spotify": "ts-node scripts/setup-spotify-playlist.ts"
   },
   "keywords": [
     "oura",
@@ -24,12 +25,14 @@
     "ask-sdk-express-adapter": "^2.14.0",
     "axios": "^1.6.0",
     "dotenv": "^16.3.1",
-    "node-cron": "^3.0.3"
+    "node-cron": "^3.0.3",
+    "spotify-web-api-node": "^5.0.2"
   },
   "devDependencies": {
     "@types/express": "^4.17.21",
     "@types/node": "^20.9.0",
     "@types/node-cron": "^3.0.11",
+    "@types/spotify-web-api-node": "^5.0.11",
     "typescript": "^5.2.2",
     "ts-node": "^10.9.2"
   }
