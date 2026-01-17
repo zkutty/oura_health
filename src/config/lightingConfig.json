@@ -1,0 +1,115 @@
+{
+  "enabled": true,
+  "provider": "govee",
+  "scenes": {
+    "very_high_energy": {
+      "name": "Peak Performance Mode",
+      "brightness": 95,
+      "colorTemp": 6500,
+      "color": null,
+      "description": "Bright, energizing cool white for peak performance",
+      "energyLevels": ["very_high"]
+    },
+    "high_energy": {
+      "name": "Morning High Readiness",
+      "brightness": 80,
+      "colorTemp": 5500,
+      "color": null,
+      "description": "Bright, energizing cool white",
+      "energyLevels": ["high"]
+    },
+    "moderate_energy": {
+      "name": "Focus Mode",
+      "brightness": 70,
+      "colorTemp": 4500,
+      "color": null,
+      "description": "Neutral, concentration-friendly",
+      "energyLevels": ["moderate"]
+    },
+    "low_energy": {
+      "name": "Morning Low Readiness",
+      "brightness": 40,
+      "colorTemp": 3500,
+      "color": null,
+      "description": "Gentle, warm white for easier wake-up",
+      "energyLevels": ["low"]
+    },
+    "recovery": {
+      "name": "Recovery Mode",
+      "brightness": 15,
+      "colorTemp": 2200,
+      "color": [255, 180, 100],
+      "description": "Minimal, restful amber light",
+      "energyLevels": ["very_low"]
+    },
+    "workout": {
+      "name": "Workout Mode",
+      "brightness": 95,
+      "color": [255, 100, 0],
+      "pulse": true,
+      "description": "High energy, motivating orange-red",
+      "manual": true
+    },
+    "evening_wind_down": {
+      "name": "Evening Wind Down",
+      "brightness": 25,
+      "colorTemp": 2200,
+      "color": null,
+      "description": "Very warm, sleep-promoting",
+      "manual": true
+    }
+  },
+  "musicSync": {
+    "enabled": true,
+    "brightnessRange": {
+      "min": 30,
+      "max": 90
+    },
+    "energyMapping": {
+      "high": {
+        "brightnessBoost": 20,
+        "colorSaturation": 0.7
+      },
+      "moderate": {
+        "brightnessBoost": 10,
+        "colorSaturation": 0.5
+      },
+      "low": {
+        "brightnessReduction": 15,
+        "colorSaturation": 0.3
+      }
+    },
+    "valenceToColor": {
+      "happy": {
+        "hue": 0.15,
+        "description": "Yellow-orange (valence > 0.7)"
+      },
+      "neutral": {
+        "useColorTemp": true,
+        "colorTemp": 4000,
+        "description": "Neutral white (valence 0.4-0.7)"
+      },
+      "melancholy": {
+        "hue": 0.6,
+        "description": "Blue (valence < 0.4)"
+      }
+    }
+  },
+  "automation": {
+    "morningLighting": {
+      "enabled": true,
+      "time": "7:00",
+      "basedOnOuraScores": true
+    },
+    "eveningWindDown": {
+      "enabled": true,
+      "time": "21:00",
+      "scene": "evening_wind_down"
+    },
+    "syncToPlaylist": {
+      "enabled": true,
+      "updateInterval": 30000,
+      "description": "Sync lights to currently playing track every 30 seconds"
+    }
+  }
+}

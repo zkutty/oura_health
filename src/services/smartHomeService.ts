@@ -1,4 +1,6 @@
 import { OuraDailySummary, OuraSleepData, OuraReadinessData, OuraActivityData } from './ouraService';
+import { LightingService } from './lightingService';
+import { EnergyLevel } from './playlistService';
 import axios from 'axios';
 
 export interface SmartHomeAction {
@@ -6,6 +8,8 @@ export interface SmartHomeAction {
   name: string;
   device: string;
   action: string;
+  actionType?: 'lighting_scene' | 'lighting_energy' | 'generic';
+  lightingScene?: string;
   condition: ActionCondition;
 }
 
@@ -24,12 +28,14 @@ export interface SmartHomeConfig {
 
 export class SmartHomeService {
   private config: SmartHomeConfig;
+  private lightingService?: LightingService;
 
-  constructor() {
+  constructor(lightingService?: LightingService) {
     this.config = {
       enabled: process.env.SMART_HOME_ENABLED === 'true',
       actions: [],
     };
+    this.lightingService = lightingService;
   }
 
   loadConfig(config: SmartHomeConfig): void {
@@ -148,16 +154,41 @@ export class SmartHomeService {
   }
 
   private async executeAction(action: SmartHomeAction): Promise<void> {
-    // This is a placeholder for actual smart home execution
-    // In a real implementation, you would:
-    // 1. Use Alexa Smart Home API to control devices
-    // 2. Or use home automation platforms like Home Assistant, SmartThings, etc.
-    // 3. Or trigger Alexa routines via the Alexa API
-    
     console.log(`Executing smart home action: ${action.name}`);
     console.log(`Device: ${action.device}, Action: ${action.action}`);
 
-    // Example: If you have an Alexa API endpoint configured
+    // Handle lighting actions if LightingService is available
+    if (this.lightingService && action.actionType === 'lighting_scene' && action.lightingScene) {
+      try {
+        const result = await this.lightingService.applyNamedScene(action.lightingScene);
+        if (result.success) {
+          console.log(`✓ Applied lighting scene "${action.lightingScene}" to ${result.devicesUpdated} device(s)`);
+        } else {
+          console.log(`✗ Failed to apply lighting scene: ${result.error}`);
+        }
+        return;
+      } catch (error: any) {
+        console.error(`Error applying lighting scene:`, error.message);
+      }
+    }
+
+    // Handle energy-based lighting actions
+    if (this.lightingService && action.actionType === 'lighting_energy') {
+      try {
+        const energyLevel = this.extractEnergyLevelFromAction(action);
+        if (energyLevel) {
+          const result = await this.lightingService.applySceneForEnergyLevel(energyLevel);
+          if (result.success) {
+            console.log(`✓ Applied ${energyLevel} energy lighting to ${result.devicesUpdated} device(s)`);
+          }
+        }
+        return;
+      } catch (error: any) {
+        console.error(`Error applying energy-based lighting:`, error.message);
+      }
+    }
+
+    // Fallback to Alexa endpoint or generic action
     if (this.config.alexaEndpoint) {
       try {
         await axios.post(this.config.alexaEndpoint, {
@@ -165,10 +196,24 @@ export class SmartHomeService {
           action: action.action,
         });
       } catch (error) {
-        // Fallback to logging if endpoint fails
         console.log(`Would execute: ${action.device} -> ${action.action}`);
       }
+    } else {
+      console.log(`Would execute: ${action.device} -> ${action.action}`);
     }
+  }
+
+  private extractEnergyLevelFromAction(action: SmartHomeAction): EnergyLevel | null {
+    // Try to determine energy level from action name or device
+    const actionLower = `${action.name} ${action.action}`.toLowerCase();
+
+    if (actionLower.includes('very_low') || actionLower.includes('recovery')) return 'very_low';
+    if (actionLower.includes('low')) return 'low';
+    if (actionLower.includes('moderate')) return 'moderate';
+    if (actionLower.includes('high') && !actionLower.includes('very')) return 'high';
+    if (actionLower.includes('very_high') || actionLower.includes('peak')) return 'very_high';
+
+    return null;
   }
 
   getConfig(): SmartHomeConfig {

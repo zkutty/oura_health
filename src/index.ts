@@ -7,7 +7,10 @@ import { OuraService } from './services/ouraService';
 import { SmartHomeService } from './services/smartHomeService';
 import { SpotifyService } from './services/spotifyService';
 import { PlaylistService } from './services/playlistService';
+import { GoveeService } from './services/goveeService';
+import { LightingService } from './services/lightingService';
 import { DataFreshnessChecker } from './utils/dataFreshnessChecker';
+import { EnergyLevel } from './services/playlistService';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -19,9 +22,11 @@ const PORT = process.env.PORT || 3000;
 
 // Initialize services
 const ouraService = new OuraService();
-const smartHomeService = new SmartHomeService();
 const spotifyService = new SpotifyService();
 const playlistService = new PlaylistService(spotifyService);
+const goveeService = new GoveeService();
+const lightingService = new LightingService(goveeService);
+const smartHomeService = new SmartHomeService(lightingService);
 
 // Load smart home configuration
 try {
@@ -43,6 +48,22 @@ try {
   console.log('Spotify configuration loaded');
 } catch (error) {
   console.error('Failed to load Spotify configuration:', error);
+}
+
+// Load Lighting configuration
+try {
+  const lightingConfigPath = path.join(__dirname, 'config', 'lightingConfig.json');
+  const lightingConfigData = fs.readFileSync(lightingConfigPath, 'utf-8');
+  const lightingConfig = JSON.parse(lightingConfigData);
+  lightingService.loadConfig(lightingConfig);
+  lightingService.initialize().then(() => {
+    console.log('Lighting service initialized');
+  }).catch((error) => {
+    console.error('Failed to initialize lighting service:', error);
+  });
+  console.log('Lighting configuration loaded');
+} catch (error) {
+  console.error('Failed to load lighting configuration:', error);
 }
 
 // Middleware
@@ -179,18 +200,115 @@ app.get('/spotify/data-freshness', async (req, res) => {
   }
 });
 
-// Scheduled job to check health scores and trigger actions
-// Runs every morning at 7 AM
-cron.schedule('0 7 * * *', async () => {
-  console.log('Running scheduled health check and smart home action evaluation...');
+// Lighting control endpoints
+app.post('/lighting/scene/:sceneName', async (req, res) => {
+  try {
+    const { sceneName } = req.params;
+    const result = await lightingService.applyNamedScene(sceneName);
+    res.json(result);
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/lighting/energy-level', async (req, res) => {
+  try {
+    const { energyLevel } = req.body as { energyLevel: EnergyLevel };
+    const result = await lightingService.applySceneForEnergyLevel(energyLevel);
+    res.json(result);
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/lighting/sync-to-oura', async (req, res) => {
   try {
     const summary = await ouraService.getTodaySummary();
+    const readinessScore = summary.readiness?.score ?? 0;
+    const sleepScore = summary.sleep?.score ?? 0;
+
+    // Determine energy level based on scores
+    let energyLevel: EnergyLevel = 'moderate';
+    const combinedScore = (readinessScore * 0.6) + (sleepScore * 0.4);
+
+    if (combinedScore >= 90) energyLevel = 'very_high';
+    else if (combinedScore >= 85) energyLevel = 'high';
+    else if (combinedScore >= 75) energyLevel = 'moderate';
+    else if (combinedScore >= 70) energyLevel = 'low';
+    else energyLevel = 'very_low';
+
+    const result = await lightingService.applySceneForEnergyLevel(energyLevel);
+    res.json({
+      ...result,
+      ouraScores: { readiness: readinessScore, sleep: sleepScore, combined: combinedScore },
+      energyLevel,
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/lighting/off', async (req, res) => {
+  try {
+    const result = await lightingService.turnOffAll();
+    res.json(result);
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/lighting/on', async (req, res) => {
+  try {
+    const result = await lightingService.turnOnAll();
+    res.json(result);
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.get('/lighting/scenes', (req, res) => {
+  const scenes = lightingService.getAvailableScenes();
+  res.json({ scenes });
+});
+
+app.get('/lighting/config', (req, res) => {
+  res.json(lightingService.getConfig());
+});
+
+// Scheduled job to check health scores and trigger actions + lighting
+// Runs every morning at 7 AM
+cron.schedule('0 7 * * *', async () => {
+  console.log('Running scheduled health check, smart home, and lighting automation...');
+  try {
+    const summary = await ouraService.getTodaySummary();
+
+    // Execute smart home actions
     const executedActions = await smartHomeService.evaluateAndExecuteActions(summary);
 
     if (executedActions.length > 0) {
       console.log(`Executed ${executedActions.length} smart home actions:`, executedActions);
     } else {
       console.log('No smart home actions were triggered based on current health scores.');
+    }
+
+    // Sync lighting to Oura scores (morning lighting automation)
+    const lightingConfig = lightingService.getConfig();
+    if (lightingConfig && lightingConfig.enabled && lightingConfig.automation.morningLighting.enabled) {
+      const readinessScore = summary.readiness?.score ?? 0;
+      const sleepScore = summary.sleep?.score ?? 0;
+      const combinedScore = (readinessScore * 0.6) + (sleepScore * 0.4);
+
+      let energyLevel: EnergyLevel = 'moderate';
+      if (combinedScore >= 90) energyLevel = 'very_high';
+      else if (combinedScore >= 85) energyLevel = 'high';
+      else if (combinedScore >= 75) energyLevel = 'moderate';
+      else if (combinedScore >= 70) energyLevel = 'low';
+      else energyLevel = 'very_low';
+
+      const lightingResult = await lightingService.applySceneForEnergyLevel(energyLevel);
+      if (lightingResult.success) {
+        console.log(`✓ Applied ${energyLevel} lighting scene to ${lightingResult.devicesUpdated} device(s)`);
+      }
     }
   } catch (error: any) {
     console.error('Error in scheduled health check:', error.message);
@@ -223,6 +341,19 @@ async function attemptPlaylistGeneration() {
       console.log(`✓ Successfully generated playlist: ${result.playlistName}`);
       console.log(`  Added ${result.tracksAdded} tracks based on ${result.energyLevel} energy level`);
       console.log(`  Oura scores - Readiness: ${result.ouraScores.readiness}, Sleep: ${result.ouraScores.sleep}`);
+
+      // Optionally sync lighting to the music energy level
+      const lightingConfig = lightingService.getConfig();
+      if (lightingConfig && lightingConfig.enabled && lightingConfig.automation.syncToPlaylist.enabled) {
+        try {
+          const lightingResult = await lightingService.applySceneForEnergyLevel(result.energyLevel);
+          if (lightingResult.success) {
+            console.log(`✓ Synced lighting to ${result.energyLevel} energy level (${lightingResult.devicesUpdated} devices)`);
+          }
+        } catch (error: any) {
+          console.error('Error syncing lighting to playlist:', error.message);
+        }
+      }
 
       // Reset retry counter on success
       playlistRetryCount = MAX_PLAYLIST_RETRIES;
@@ -266,5 +397,15 @@ app.listen(PORT, () => {
     console.log(`  Scheduled time: ${spotifyConfig.schedule.initialTime} (with ${spotifyConfig.schedule.maxRetries} retries)`);
   } else {
     console.log(`Spotify playlist automation: disabled`);
+  }
+
+  const lightingConfig = lightingService.getConfig();
+  if (lightingConfig && lightingConfig.enabled) {
+    console.log(`Lighting automation: enabled (${lightingConfig.provider})`);
+    console.log(`  Morning lighting: ${lightingConfig.automation.morningLighting.enabled ? 'enabled' : 'disabled'}`);
+    console.log(`  Music sync: ${lightingConfig.musicSync.enabled ? 'enabled' : 'disabled'}`);
+    console.log(`  Evening wind down: ${lightingConfig.automation.eveningWindDown.enabled ? 'enabled' : 'disabled'}`);
+  } else {
+    console.log(`Lighting automation: disabled`);
   }
 });
