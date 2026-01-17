@@ -1,0 +1,107 @@
+service: oura-health
+
+frameworkVersion: '3'
+
+provider:
+  name: aws
+  runtime: nodejs18.x
+  region: ${opt:region, 'us-east-1'}
+  stage: ${opt:stage, 'dev'}
+  timeout: 30
+  memorySize: 512
+  
+  environment:
+    NODE_ENV: production
+    OURA_ACCESS_TOKEN: ${env:OURA_ACCESS_TOKEN}
+    OURA_REFRESH_TOKEN: ${env:OURA_REFRESH_TOKEN, ''}
+    OURA_CLIENT_ID: ${env:OURA_CLIENT_ID, ''}
+    OURA_CLIENT_SECRET: ${env:OURA_CLIENT_SECRET, ''}
+    SPOTIFY_CLIENT_ID: ${env:SPOTIFY_CLIENT_ID}
+    SPOTIFY_CLIENT_SECRET: ${env:SPOTIFY_CLIENT_SECRET}
+    SPOTIFY_ACCESS_TOKEN: ${env:SPOTIFY_ACCESS_TOKEN}
+    SPOTIFY_REFRESH_TOKEN: ${env:SPOTIFY_REFRESH_TOKEN}
+    SPOTIFY_ENABLED: ${env:SPOTIFY_ENABLED, 'true'}
+    GOVEE_API_KEY: ${env:GOVEE_API_KEY, ''}
+    LIGHTING_ENABLED: ${env:LIGHTING_ENABLED, 'true'}
+    ALEXA_SKILL_ID: ${env:ALEXA_SKILL_ID, ''}
+
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+          Resource: '*'
+
+functions:
+  # Alexa Skill endpoint
+  alexa:
+    handler: dist/lambda/index.alexaHandler
+    events:
+      - http:
+          path: /alexa
+          method: post
+          cors: true
+
+  # Morning automation - runs at 7:00 AM daily
+  morningAutomation:
+    handler: dist/lambda/index.scheduledMorningAutomation
+    events:
+      - schedule:
+          rate: cron(0 7 * * ? *)
+          enabled: true
+          description: Morning automation based on Oura scores
+
+  # Playlist generation - runs at 7:45 AM daily
+  playlistGeneration:
+    handler: dist/lambda/index.scheduledPlaylistGeneration
+    events:
+      - schedule:
+          rate: cron(45 7 * * ? *)
+          enabled: true
+          description: Generate daily Spotify playlist
+
+  # Playlist retry - runs hourly from 8 AM to 1 PM
+  playlistRetry:
+    handler: dist/lambda/index.scheduledPlaylistRetry
+    events:
+      - schedule:
+          rate: cron(0 8-13 * * ? *)
+          enabled: true
+          description: Retry playlist generation if data not fresh
+
+  # Evening wind-down - runs at 9:00 PM daily
+  eveningWindDown:
+    handler: dist/lambda/index.scheduledEveningWindDown
+    events:
+      - schedule:
+          rate: cron(0 21 * * ? *)
+          enabled: true
+          description: Evening wind-down lighting
+
+plugins:
+  - serverless-plugin-typescript
+
+package:
+  patterns:
+    - '!src/**'
+    - '!*.md'
+    - '!docs/**'
+    - '!scripts/**'
+    - '!*.json'
+    - '!*.yml'
+    - '!*.yaml'
+    - '!.git/**'
+    - '!.env*'
+    - 'dist/**'
+    - 'node_modules/**'
+
+resources:
+  Resources:
+    OuraHealthLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/oura-health-${self:provider.stage}
+        RetentionInDays: 14

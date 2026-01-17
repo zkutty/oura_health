@@ -8,6 +8,7 @@ import { SmartHomeService } from './services/smartHomeService';
 import { SpotifyService } from './services/spotifyService';
 import { PlaylistService } from './services/playlistService';
 import { GoveeService } from './services/goveeService';
+import { AlexaRoutineService } from './services/alexaRoutineService';
 import { LightingService } from './services/lightingService';
 import { DataFreshnessChecker } from './utils/dataFreshnessChecker';
 import { EnergyLevel } from './services/playlistService';
@@ -24,8 +25,32 @@ const PORT = process.env.PORT || 3000;
 const ouraService = new OuraService();
 const spotifyService = new SpotifyService();
 const playlistService = new PlaylistService(spotifyService);
-const goveeService = new GoveeService();
-const lightingService = new LightingService(goveeService);
+
+// Initialize lighting service based on provider configuration
+let lightingService: LightingService;
+let goveeService: GoveeService | null = null;
+let alexaRoutineService: AlexaRoutineService | null = null;
+
+// Load lighting config to determine provider
+try {
+  const lightingConfigPath = path.join(__dirname, 'config', 'lightingConfig.json');
+  const lightingConfigData = fs.readFileSync(lightingConfigPath, 'utf-8');
+  const lightingConfig = JSON.parse(lightingConfigData);
+
+  if (lightingConfig.provider === 'alexa') {
+    alexaRoutineService = new AlexaRoutineService();
+    lightingService = new LightingService(undefined, alexaRoutineService);
+  } else {
+    goveeService = new GoveeService();
+    lightingService = new LightingService(goveeService);
+  }
+} catch (error) {
+  // Fallback to Govee if config can't be loaded
+  console.warn('Could not load lighting config, defaulting to Govee');
+  goveeService = new GoveeService();
+  lightingService = new LightingService(goveeService);
+}
+
 const smartHomeService = new SmartHomeService(lightingService);
 
 // Load smart home configuration

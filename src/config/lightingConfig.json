@@ -1,6 +1,16 @@
 {
   "enabled": true,
-  "provider": "govee",
+  "provider": "alexa",
+  "alexaRoutines": {
+    "enabled": true,
+    "routineMapping": {
+      "very_high": "High Energy Scene",
+      "high": "High Energy Scene",
+      "moderate": "Moderate Energy Scene",
+      "low": "Low Energy Scene",
+      "very_low": "Very Low Energy Scene"
+    }
+  },
   "scenes": {
     "very_high_energy": {
       "name": "Peak Performance Mode",
