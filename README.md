@@ -1,251 +1,136 @@
-# Oura Health Alexa Skill
+# Oura Health Integration System
 
-An Alexa skill that integrates with your Oura Ring health data to provide insights and automate smart home actions based on your sleep, readiness, and activity scores.
+A comprehensive health automation system that integrates your Oura Ring data with Spotify, smart lighting, and Alexa to create an adaptive environment based on your sleep, readiness, and activity scores.
 
 ## Features
 
-- **Voice Commands**: Ask Alexa about your sleep, readiness, and activity scores
-- **Smart Home Automation**: Automatically trigger smart home actions based on your health scores
-- **Daily Health Summaries**: Get comprehensive health insights from the night before
-- **Automated Actions**: Scheduled checks every morning at 7 AM to evaluate and trigger actions
+### Voice Control (Alexa)
+- Ask Alexa about your sleep, readiness, and activity scores
+- Get daily health summaries
+- Trigger playlist generation and lighting changes
+
+### Adaptive Music (Spotify)
+- Daily playlist generation at 7:45 AM based on your health scores
+- High readiness → energetic music, low readiness → calming music
+- Smart retry system ensures fresh overnight data
+- Pulls from your saved tracks, playlists, and Spotify recommendations
+
+### Smart Lighting (Govee)
+- Automatic morning lighting based on health scores (7 AM)
+- Music-synchronized lighting that adapts to playlist energy and mood
+- Evening wind-down automation (9 PM)
+- Manual control via REST API or Alexa
+
+### Smart Home Automation
+- Configurable conditional actions based on health metrics
+- Scheduled morning automation (7 AM)
+- Extensible framework for custom integrations
+
+## Quick Start
+
+```bash
+# Install dependencies
+npm install
+
+# Configure credentials
+cp .env.example .env
+# Edit .env with your Oura, Spotify, and Govee API keys
+
+# Build and run
+npm run build
+npm start
+```
+
+Visit http://localhost:3000/health-summary to verify your Oura connection.
+
+For detailed setup instructions, see [Setup Guide](docs/setup.md).
 
 ## Architecture
 
 - **Backend**: Node.js/TypeScript with Express
-- **Oura Integration**: Oura API v2 for health data
-- **Alexa Skill**: Custom skill with multiple intents
-- **Smart Home**: Configurable action system based on health metrics
+- **Health Data**: Oura API v2 with OAuth token management
+- **Music**: Spotify Web API with playlist generation algorithms
+- **Lighting**: Govee API with scene management and music sync
+- **Voice Control**: Custom Alexa skill with multiple intents
+- **Automation**: node-cron for scheduled tasks (7 AM, 7:45 AM, 9 PM)
 
-## Setup
+## Documentation
 
-### 1. Prerequisites
+### Setup Guides
+- **[Complete Setup Guide](docs/setup.md)** - Comprehensive setup instructions for Oura, Spotify, Govee, and Alexa
+- **[Spotify Integration](docs/spotify-setup.md)** - Detailed Spotify playlist generation setup
+- **[Lighting Integration](docs/lighting-setup.md)** - Govee smart lighting configuration
 
-- Node.js 18+ and npm
-- Oura Ring account with API access
-- Alexa Developer account
-- AWS account (for hosting the skill or using Lambda)
+### System Overview
+- **[Integration Overview](docs/integration-overview.md)** - How Oura, Spotify, and Lighting work together
+- **[API Data Types](docs/api-data-types.md)** - API reference and data structures
 
-### 2. Oura API Setup
+## How It Works
 
-1. Go to [Oura Cloud](https://cloud.ouraring.com/) and create a developer account
-2. Create a new application to get:
-   - `OURA_CLIENT_ID`
-   - `OURA_CLIENT_SECRET`
-3. Obtain OAuth tokens:
-   - Use the OAuth flow to get `OURA_ACCESS_TOKEN` and `OURA_REFRESH_TOKEN`
-   - You can use the [Oura OAuth guide](https://cloud.ouraring.com/docs/authentication) for this
+### Morning Automation (7:00 AM)
+1. Fetches your Oura sleep and readiness scores from last night
+2. Calculates energy level (very_low → very_high)
+3. Applies lighting scene based on energy level
+4. Executes any configured smart home actions
 
-### 3. Install Dependencies
+### Playlist Generation (7:45 AM)
+1. Checks if Oura data is fresh (from last night)
+2. Generates Spotify playlist matching your energy level
+3. Pulls tracks from your library, playlists, and recommendations
+4. Optionally syncs lighting to match playlist mood
 
-```bash
-npm install
-```
+### Throughout the Day
+- Manual control via REST API
+- Alexa voice commands
+- Music-synchronized lighting
 
-### 4. Configure Environment
+### Evening Wind-Down (9:00 PM)
+- Automatically transitions to sleep-promoting lighting
+- Warm color temperature (2200K)
+- Low brightness (25%)
 
-Create a `.env` file in the root directory:
+## Energy Level System
 
-```env
-OURA_CLIENT_ID=your_oura_client_id
-OURA_CLIENT_SECRET=your_oura_client_secret
-OURA_ACCESS_TOKEN=your_oura_access_token
-OURA_REFRESH_TOKEN=your_oura_refresh_token
+The system uses a unified 5-tier energy mapping for both music and lighting:
 
-PORT=3000
-NODE_ENV=development
+| Energy Level | Conditions | Music Style | Lighting |
+|-------------|-----------|-------------|----------|
+| **Very High** | Readiness ≥90 AND Sleep ≥90 | Rock, EDM, intense | 95% brightness, 6500K cool white |
+| **High** | Readiness ≥85 OR Sleep ≥85 | Dance, pop, upbeat | 80% brightness, 5500K |
+| **Moderate** | Readiness ≥75 AND Sleep ≥80 | Indie, alternative | 70% brightness, 4500K |
+| **Low** | Readiness ≥70 OR Sleep ≥75 | Folk, jazz, lo-fi | 40% brightness, 3500K warm |
+| **Very Low** | Below thresholds | Ambient, classical, chill | 15% brightness, 2200K amber |
 
-ALEXA_SKILL_ID=your_alexa_skill_id
+## REST API
 
-SMART_HOME_ENABLED=true
-```
+### Health Data
+- `GET /health-summary` - Get today's Oura summary
+- `GET /spotify/data-freshness` - Check if data is fresh
 
-### 5. Build the Project
+### Spotify Control
+- `POST /generate-playlist` - Generate playlist
+- `GET /spotify/playlist-status` - Playlist info
+- `GET /spotify/config` - View configuration
 
-```bash
-npm run build
-```
+### Lighting Control
+- `POST /lighting/scene/:name` - Apply scene
+- `POST /lighting/sync-to-oura` - Sync to health
+- `POST /lighting/on` - Turn on lights
+- `POST /lighting/off` - Turn off lights
+- `GET /lighting/scenes` - List scenes
 
-### 6. Run the Server
+### Smart Home
+- `POST /trigger-smart-home` - Trigger actions
+- `GET /smart-home/config` - View config
 
-```bash
-npm start
-```
+## Configuration Files
 
-For development with auto-reload:
+All behavior is configuration-driven:
 
-```bash
-npm run dev
-```
-
-## Alexa Skill Setup
-
-### 1. Create Alexa Skill
-
-1. Go to [Alexa Developer Console](https://developer.amazon.com/alexa/console/ask)
-2. Create a new skill:
-   - **Skill name**: Oura Health
-   - **Default language**: English (US)
-   - **Skill type**: Custom
-
-### 2. Configure Interaction Model
-
-Use the provided `alexa-interaction-model.json` file or create intents manually:
-
-**Intents:**
-- `SleepScoreIntent` - Get sleep score
-- `ReadinessScoreIntent` - Get readiness score
-- `ActivityScoreIntent` - Get activity score
-- `HealthSummaryIntent` - Get complete health summary
-
-**Sample Utterances:**
-
-```
-SleepScoreIntent what was my sleep score
-SleepScoreIntent how did I sleep
-SleepScoreIntent tell me my sleep score
-SleepScoreIntent sleep score from last night
-
-ReadinessScoreIntent what is my readiness score
-ReadinessScoreIntent how ready am I
-ReadinessScoreIntent tell me my readiness score
-
-ActivityScoreIntent what was my activity score
-ActivityScoreIntent how active was I
-ActivityScoreIntent tell me my activity score
-
-HealthSummaryIntent health summary
-HealthSummaryIntent give me my health summary
-HealthSummaryIntent how was my health
-HealthSummaryIntent summary
-```
-
-### 3. Configure Endpoint
-
-For development, you can use:
-- **HTTPS**: Your public server URL (e.g., ngrok tunnel)
-- **Lambda**: Deploy to AWS Lambda
-
-**Using ngrok for local testing:**
-
-```bash
-ngrok http 3000
-```
-
-Use the ngrok HTTPS URL as your skill endpoint.
-
-### 4. Test Your Skill
-
-You can test the skill using:
-- Alexa Developer Console Test tab
-- An Alexa-enabled device (after certification)
-- The Alexa Simulator
-
-## Smart Home Configuration
-
-Edit `src/config/smartHomeConfig.json` to configure smart home actions:
-
-```json
-{
-  "enabled": true,
-  "actions": [
-    {
-      "id": "poor-sleep-dim-lights",
-      "name": "Dim lights on poor sleep",
-      "device": "bedroom_lights",
-      "action": "dim_to_30_percent",
-      "condition": {
-        "metric": "sleep",
-        "operator": "lt",
-        "threshold": 70,
-        "subMetric": "score"
-      }
-    }
-  ]
-}
-```
-
-### Action Conditions
-
-**Metrics:**
-- `sleep` - Sleep-related metrics
-- `readiness` - Readiness metrics
-- `activity` - Activity metrics
-- `combined` - Average of all scores
-
-**Operators:**
-- `lt` - Less than
-- `lte` - Less than or equal
-- `gt` - Greater than
-- `gte` - Greater than or equal
-- `eq` - Equal to
-
-**Sub-metrics for sleep:**
-- `score` - Sleep score (0-100)
-- `duration` - Total sleep duration (hours)
-- `efficiency` - Sleep efficiency percentage
-
-**Sub-metrics for readiness:**
-- `score` - Readiness score (0-100)
-- `resting_heart_rate` - Resting heart rate (bpm)
-
-**Sub-metrics for activity:**
-- `score` - Activity score (0-100)
-- `steps` - Number of steps
-
-## API Endpoints
-
-### GET `/health`
-Health check endpoint
-
-### POST `/alexa`
-Alexa skill endpoint
-
-### GET `/health-summary`
-Get yesterday's health summary
-
-### POST `/trigger-smart-home`
-Manually trigger smart home action evaluation
-
-### GET `/smart-home/config`
-Get current smart home configuration
-
-### POST `/smart-home/action`
-Add a new smart home action
-
-### DELETE `/smart-home/action/:id`
-Remove a smart home action
-
-## Scheduled Automation
-
-The app automatically runs health checks every morning at 7 AM and evaluates smart home actions based on your scores from the night before. You can customize this schedule in `src/index.ts`.
-
-## Deployment
-
-### Option 1: AWS Lambda
-
-1. Package your code:
-```bash
-npm run build
-zip -r function.zip dist/ node_modules/ package.json
-```
-
-2. Create a Lambda function in AWS
-3. Upload the zip file
-4. Set the handler to `index.handler`
-5. Configure API Gateway as a trigger
-6. Use the API Gateway URL as your Alexa skill endpoint
-
-### Option 2: VPS/Cloud Server
-
-1. Build the project: `npm run build`
-2. Set up PM2 or similar process manager:
-```bash
-npm install -g pm2
-pm2 start dist/index.js --name oura-health
-```
-
-3. Configure nginx as a reverse proxy
-4. Set up SSL certificate (required for Alexa)
+- **`src/config/spotifyConfig.json`** - Playlist generation, energy mapping, music sources
+- **`src/config/lightingConfig.json`** - Lighting scenes, music sync, automation schedule
+- **`src/config/smartHomeConfig.json`** - Conditional actions and triggers
+- **`.env`** - API credentials for Oura, Spotify, Govee
 
 ## Example Voice Commands
 
@@ -254,25 +139,84 @@ pm2 start dist/index.js --name oura-health
 - "Alexa, ask Oura Health how ready am I"
 - "Alexa, ask Oura Health give me my health summary"
 
+## Example Usage
+
+### Morning Flow (Automatic)
+```
+7:00 AM → Oura data fetched → Lighting applied based on energy level
+7:45 AM → Playlist generated with matching music → Lights sync to music
+```
+
+### Manual Control
+```bash
+# Generate playlist on demand
+curl -X POST http://localhost:3000/generate-playlist
+
+# Apply specific lighting scene
+curl -X POST http://localhost:3000/lighting/scene/workout
+
+# Sync lights to current health scores
+curl -X POST http://localhost:3000/lighting/sync-to-oura
+
+# Get current health summary
+curl http://localhost:3000/health-summary
+```
+
+## Customization
+
+All features are highly customizable through configuration files:
+
+- **Adjust energy thresholds** - Change when each level activates
+- **Modify music preferences** - Add genres, adjust audio feature targets
+- **Custom lighting scenes** - Create your own scene definitions
+- **Automation schedule** - Change timing of automated tasks
+- **Smart home actions** - Add conditional automations
+
+See [Setup Guide](docs/setup.md) for detailed customization instructions.
+
 ## Troubleshooting
 
-### Oura API Issues
+For detailed troubleshooting, see:
+- [Setup Guide - Troubleshooting](docs/setup.md#troubleshooting)
+- [Spotify Setup - Troubleshooting](docs/spotify-setup.md#troubleshooting)
+- [Lighting Setup - Troubleshooting](docs/lighting-setup.md#troubleshooting)
 
-- Verify your access token is valid
-- Check that your OAuth tokens haven't expired
-- Ensure your Oura app has the correct scopes
+Quick fixes:
+- **Oura API issues**: Regenerate personal access token
+- **Spotify not working**: Run `npm run setup-spotify` again
+- **Lights not responding**: Verify Govee API key is approved (takes up to 24 hours)
+- **Playlist not updating**: Check data freshness at `/spotify/data-freshness`
 
-### Alexa Skill Issues
+## Project Structure
 
-- Verify your endpoint URL is HTTPS and publicly accessible
-- Check that your skill ID matches in the code
-- Ensure your interaction model is properly configured
+```
+oura_health/
+├── src/
+│   ├── config/             # Configuration files
+│   │   ├── spotifyConfig.json
+│   │   ├── lightingConfig.json
+│   │   └── smartHomeConfig.json
+│   ├── handlers/           # Alexa intent handlers
+│   ├── services/           # Business logic services
+│   │   ├── ouraService.ts
+│   │   ├── spotifyService.ts
+│   │   ├── goveeService.ts
+│   │   ├── playlistService.ts
+│   │   ├── lightingService.ts
+│   │   └── smartHomeService.ts
+│   ├── utils/              # Utilities
+│   └── index.ts            # Main application
+├── docs/                   # Documentation
+└── .env                    # Environment variables (not in git)
+```
 
-### Smart Home Actions Not Triggering
+## Tech Stack
 
-- Check that `SMART_HOME_ENABLED=true` in your `.env`
-- Verify your action conditions match your health scores
-- Check the logs for any errors
+- **Runtime**: Node.js 18+ with TypeScript
+- **Web Framework**: Express
+- **Scheduling**: node-cron
+- **APIs**: Oura v2, Spotify Web API, Govee API, Alexa Skills Kit
+- **HTTP Client**: axios with interceptors for token refresh
 
 ## License
 
@@ -281,3 +225,7 @@ MIT
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
+
+## Acknowledgments
+
+Built to create an adaptive environment that responds to your body's recovery and readiness, making your living space work *with* you, not against you.
