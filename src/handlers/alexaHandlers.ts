@@ -150,14 +150,24 @@ const ActivityScoreIntentHandler: RequestHandler = {
 
 const ResilienceIntentHandler: RequestHandler = {
   canHandle(handlerInput: HandlerInput): boolean {
-    return getRequestType(handlerInput.requestEnvelope) === 'IntentRequest'
-      && getIntentName(handlerInput.requestEnvelope) === 'ResilienceIntent';
+    const requestType = getRequestType(handlerInput.requestEnvelope);
+    const intentName = getIntentName(handlerInput.requestEnvelope);
+    const matches = requestType === 'IntentRequest' && intentName === 'ResilienceIntent';
+    
+    if (matches) {
+      console.log('[ResilienceIntentHandler] Handler matched for ResilienceIntent');
+    }
+    
+    return matches;
   },
   async handle(handlerInput: HandlerInput): Promise<Response> {
+    console.log('[ResilienceIntentHandler] Handling ResilienceIntent request');
     const ouraService = new OuraService();
 
     try {
+      console.log('[ResilienceIntentHandler] Fetching today summary...');
       const summary = await ouraService.getTodaySummary();
+      console.log('[ResilienceIntentHandler] Summary fetched. Resilience data:', summary.resilience ? 'present' : 'missing');
 
       if (summary.resilience) {
         const resilience = summary.resilience;
@@ -176,16 +186,19 @@ const ResilienceIntentHandler: RequestHandler = {
         const speakOutput = `Your resilience level is ${description}. ` +
           `This is based on your balance of stress and recovery over the past two weeks.`;
 
+        console.log('[ResilienceIntentHandler] Returning response with resilience level:', resilience.level);
         return handlerInput.responseBuilder
           .speak(speakOutput)
           .getResponse();
       } else {
+        console.log('[ResilienceIntentHandler] No resilience data found in summary');
         return handlerInput.responseBuilder
           .speak("I couldn't find your resilience data. You may need at least 5 days of data for Oura to calculate resilience.")
           .getResponse();
       }
     } catch (error: any) {
-      console.error('Error fetching resilience:', error);
+      console.error('[ResilienceIntentHandler] Error fetching resilience:', error);
+      console.error('[ResilienceIntentHandler] Error stack:', error.stack);
       return handlerInput.responseBuilder
         .speak("Sorry, I had trouble getting your resilience data. Please try again later.")
         .getResponse();
@@ -321,7 +334,12 @@ const ErrorHandler = {
     return true;
   },
   handle(handlerInput: HandlerInput, error: Error): Response {
-    console.error(`Error handled: ${error.message}`);
+    const requestType = getRequestType(handlerInput.requestEnvelope);
+    const intentName = getIntentName(handlerInput.requestEnvelope);
+    
+    console.error(`[ErrorHandler] Error caught - Request type: ${requestType}, Intent: ${intentName}`);
+    console.error(`[ErrorHandler] Error message: ${error.message}`);
+    console.error(`[ErrorHandler] Error stack: ${error.stack}`);
 
     return handlerInput.responseBuilder
       .speak('Sorry, I had trouble understanding. Please try again.')
