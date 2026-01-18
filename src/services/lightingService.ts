@@ -337,14 +337,18 @@ export class LightingService {
       // Neutral (0.4-0.7) uses color temperature instead of RGB
 
       // Apply to all devices
+      if (!this.goveeService) {
+        throw new Error('Govee service not initialized - cannot sync to music');
+      }
+
       const results = await Promise.allSettled(
         this.devices.map(async (device) => {
-          await this.goveeService.setBrightness(device, Math.round(brightness));
+          await this.goveeService!.setBrightness(device, Math.round(brightness));
 
           if (color) {
-            await this.goveeService.setColor(device, color);
+            await this.goveeService!.setColor(device, color);
           } else if (valenceToColor.neutral.useColorTemp) {
-            await this.goveeService.setColorTemperature(device, valenceToColor.neutral.colorTemp);
+            await this.goveeService!.setColorTemperature(device, valenceToColor.neutral.colorTemp);
           }
 
           return true;

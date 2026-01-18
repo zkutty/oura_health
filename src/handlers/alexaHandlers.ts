@@ -30,16 +30,23 @@ const SleepScoreIntentHandler: RequestHandler = {
   },
   async handle(handlerInput: HandlerInput): Promise<Response> {
     const ouraService = new OuraService();
-    
+
     try {
       const summary = await ouraService.getYesterdaySummary();
-      
+
       if (summary.sleep) {
-        const sleep = summary.sleep;
+        const sleep = summary.sleep as any;
         const hours = Math.floor(sleep.total_sleep_duration / 3600);
         const minutes = Math.floor((sleep.total_sleep_duration % 3600) / 60);
-        
-        const speakOutput = `Last night, your sleep score was ${sleep.score} out of 100. ` +
+
+        // Sleep score is nested in sleep.readiness.score in Oura API v2
+        const sleepScore = sleep.readiness?.score || 'unavailable';
+
+        // Format the date nicely
+        const date = new Date(summary.date);
+        const dayName = date.toLocaleDateString('en-US', { weekday: 'long' });
+
+        const speakOutput = `For ${dayName} night, your sleep score was ${sleepScore} out of 100. ` +
           `You slept for ${hours} hours and ${minutes} minutes, with a sleep efficiency of ${sleep.efficiency.toFixed(1)} percent. ` +
           `Your deep sleep was ${Math.floor(sleep.deep_sleep_duration / 3600)} hours and ` +
           `your REM sleep was ${Math.floor(sleep.rem_sleep_duration / 3600)} hours.`;
@@ -68,14 +75,22 @@ const ReadinessScoreIntentHandler: RequestHandler = {
   },
   async handle(handlerInput: HandlerInput): Promise<Response> {
     const ouraService = new OuraService();
-    
+
     try {
       const summary = await ouraService.getTodaySummary();
-      
+
       if (summary.readiness) {
-        const readiness = summary.readiness;
-        const speakOutput = `Your readiness score is ${readiness.score} out of 100. ` +
-          `Your resting heart rate is ${readiness.resting_heart_rate} beats per minute.`;
+        const readiness = summary.readiness as any;
+
+        // Resting heart rate is in contributors in Oura API v2
+        const restingHR = readiness.contributors?.resting_heart_rate || 'unavailable';
+
+        // Format the date nicely
+        const date = new Date(summary.date);
+        const dayName = date.toLocaleDateString('en-US', { weekday: 'long' });
+
+        const speakOutput = `For ${dayName}, your readiness score is ${readiness.score} out of 100. ` +
+          `Your resting heart rate is ${restingHR} beats per minute.`;
 
         return handlerInput.responseBuilder
           .speak(speakOutput)
@@ -101,13 +116,18 @@ const ActivityScoreIntentHandler: RequestHandler = {
   },
   async handle(handlerInput: HandlerInput): Promise<Response> {
     const ouraService = new OuraService();
-    
+
     try {
       const summary = await ouraService.getTodaySummary();
-      
+
       if (summary.activity) {
-        const activity = summary.activity;
-        const speakOutput = `Your activity score is ${activity.score} out of 100. ` +
+        const activity = summary.activity as any;
+
+        // Format the date nicely
+        const date = new Date(summary.date);
+        const dayName = date.toLocaleDateString('en-US', { weekday: 'long' });
+
+        const speakOutput = `For ${dayName}, your activity score is ${activity.score} out of 100. ` +
           `You took ${activity.steps} steps and burned ${activity.calories_total} total calories, ` +
           `with ${activity.active_calories} active calories.`;
 
@@ -136,23 +156,31 @@ const HealthSummaryIntentHandler: RequestHandler = {
   async handle(handlerInput: HandlerInput): Promise<Response> {
     const ouraService = new OuraService();
     const smartHomeService = new SmartHomeService();
-    
+
     try {
       const summary = await ouraService.getTodaySummary();
-      
-      let speakOutput = 'Here is your health summary: ';
-      
+
+      // Format the date nicely
+      const date = new Date(summary.date);
+      const dayName = date.toLocaleDateString('en-US', { weekday: 'long' });
+
+      let speakOutput = `Here is your health summary for ${dayName}: `;
+
       if (summary.sleep) {
-        const hours = Math.floor(summary.sleep.total_sleep_duration / 3600);
-        speakOutput += `Sleep score: ${summary.sleep.score}, you slept ${hours} hours. `;
+        const sleep = summary.sleep as any;
+        const hours = Math.floor(sleep.total_sleep_duration / 3600);
+        // Sleep score is nested in sleep.readiness.score
+        const sleepScore = sleep.readiness?.score || 'unavailable';
+        speakOutput += `Sleep score: ${sleepScore}, you slept ${hours} hours. `;
       }
-      
+
       if (summary.readiness) {
         speakOutput += `Readiness score: ${summary.readiness.score}. `;
       }
-      
+
       if (summary.activity) {
-        speakOutput += `Activity score: ${summary.activity.score}, with ${summary.activity.steps} steps. `;
+        const activity = summary.activity as any;
+        speakOutput += `Activity score: ${activity.score}, with ${activity.steps} steps. `;
       }
 
       // Check and execute smart home actions

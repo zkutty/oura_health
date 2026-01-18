@@ -91,12 +91,12 @@ try {
   console.error('Failed to load lighting configuration:', error);
 }
 
-// Middleware
-app.use(express.json());
-
-// Alexa Skill endpoint
+// Alexa Skill endpoint - MUST come before express.json() middleware
 const adapter = new ExpressAdapter(skillBuilder, false, false);
 app.post('/alexa', adapter.getRequestHandlers());
+
+// Middleware - Applied to all routes AFTER /alexa
+app.use(express.json());
 
 // Health check endpoint
 app.get('/health', (req, res) => {
@@ -132,6 +132,38 @@ app.get('/health-summary', async (req, res) => {
   try {
     const summary = await ouraService.getTodaySummary();
     res.json(summary);
+  } catch (error: any) {
+    res.status(500).json({
+      error: error.message,
+    });
+  }
+});
+
+// Test endpoint to check what data is available (last 7 days)
+app.get('/test-oura-data', async (req, res) => {
+  try {
+    const endDate = new Date();
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - 7);
+
+    const startStr = startDate.toISOString().split('T')[0];
+    const endStr = endDate.toISOString().split('T')[0];
+
+    console.log(`Testing Oura data from ${startStr} to ${endStr}`);
+
+    const sleepData = await ouraService.getSleepData(startStr, endStr);
+    const readinessData = await ouraService.getReadinessData(startStr, endStr);
+    const activityData = await ouraService.getActivityData(startStr, endStr);
+
+    res.json({
+      dateRange: { start: startStr, end: endStr },
+      sleepRecords: sleepData.length,
+      readinessRecords: readinessData.length,
+      activityRecords: activityData.length,
+      latestSleep: sleepData[sleepData.length - 1],
+      latestReadiness: readinessData[readinessData.length - 1],
+      latestActivity: activityData[activityData.length - 1],
+    });
   } catch (error: any) {
     res.status(500).json({
       error: error.message,

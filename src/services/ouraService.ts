@@ -142,8 +142,17 @@ export class OuraService {
       if (startDate) params.start_date = startDate;
       if (endDate) params.end_date = endDate;
 
+      console.log(`[OuraService] Fetching sleep data with params:`, params);
       const response = await this.client.get('/usercollection/sleep', { params });
-      return response.data.data || [];
+      const data = response.data.data || [];
+      console.log(`[OuraService] Sleep API returned ${data.length} records`);
+
+      // Log the actual data structure to understand the date field
+      if (data.length > 0) {
+        console.log(`[OuraService] Sample sleep record:`, JSON.stringify(data[0], null, 2));
+      }
+
+      return data;
     } catch (error: any) {
       console.error('Error fetching sleep data:', error.message);
       throw new Error('Failed to fetch sleep data from Oura');
@@ -222,26 +231,58 @@ export class OuraService {
 
   async getTodaySummary(): Promise<OuraDailySummary> {
     try {
-      const today = new Date();
-      const dateStr = today.toISOString().split('T')[0];
+      console.log(`[OuraService] Fetching latest health data (searching last 7 days)...`);
 
-      const [sleepData, readinessData, activityData, heartRateData, workoutData, sessionData] = await Promise.all([
-        this.getSleepData(dateStr, dateStr),
-        this.getReadinessData(dateStr, dateStr),
-        this.getActivityData(dateStr, dateStr),
-        this.getHeartRateData(dateStr, dateStr).catch(() => []),
-        this.getWorkoutData(dateStr, dateStr).catch(() => []),
-        this.getSessionData(dateStr, dateStr).catch(() => []),
+      // Fetch last 7 days of data in one call (more reliable than single-date queries)
+      const endDate = new Date();
+      const startDate = new Date();
+      startDate.setDate(startDate.getDate() - 7);
+
+      const startStr = startDate.toISOString().split('T')[0];
+      const endStr = endDate.toISOString().split('T')[0];
+
+      // Only fetch the essential metrics: sleep, readiness, activity
+      const [sleepData, readinessData, activityData] = await Promise.all([
+        this.getSleepData(startStr, endStr).catch((err) => {
+          console.error('[OuraService] Sleep data fetch failed:', err.message);
+          return [];
+        }),
+        this.getReadinessData(startStr, endStr).catch((err) => {
+          console.error('[OuraService] Readiness data fetch failed:', err.message);
+          return [];
+        }),
+        this.getActivityData(startStr, endStr).catch((err) => {
+          console.error('[OuraService] Activity data fetch failed:', err.message);
+          return [];
+        }),
       ]);
 
+      // Get the most recent data by taking the last element (arrays are sorted by date)
+      const latestSleep = sleepData.length > 0 ? sleepData[sleepData.length - 1] : undefined;
+      const latestReadiness = readinessData.length > 0 ? readinessData[readinessData.length - 1] : undefined;
+      const latestActivity = activityData.length > 0 ? activityData[activityData.length - 1] : undefined;
+
+      // Determine the date from the most recent data available
+      let resultDate = endStr;
+      if (latestSleep && 'day' in latestSleep) {
+        resultDate = (latestSleep as any).day;
+      } else if (latestReadiness && 'day' in latestReadiness) {
+        resultDate = (latestReadiness as any).day;
+      } else if (latestActivity && 'day' in latestActivity) {
+        resultDate = (latestActivity as any).day;
+      }
+
+      console.log(`[OuraService] ✓ Latest data from ${resultDate} - Sleep: ${sleepData.length}, Readiness: ${readinessData.length}, Activity: ${activityData.length} total records`);
+
+      if (!latestSleep && !latestReadiness) {
+        console.warn('[OuraService] No sleep or readiness data found in the last 7 days');
+      }
+
       return {
-        date: dateStr,
-        sleep: sleepData[0],
-        readiness: readinessData[0],
-        activity: activityData[0],
-        heartRate: heartRateData,
-        workouts: workoutData,
-        sessions: sessionData,
+        date: resultDate,
+        sleep: latestSleep,
+        readiness: latestReadiness,
+        activity: latestActivity,
       };
     } catch (error: any) {
       console.error('Error fetching today summary:', error.message);
@@ -251,21 +292,35 @@ export class OuraService {
 
   async getYesterdaySummary(): Promise<OuraDailySummary> {
     try {
+      // Use date range query since single-date queries don't work with Oura API
       const yesterday = new Date();
       yesterday.setDate(yesterday.getDate() - 1);
-      const dateStr = yesterday.toISOString().split('T')[0];
+      const targetDate = yesterday.toISOString().split('T')[0];
+
+      // Fetch last 7 days to ensure we get data
+      const endDate = new Date();
+      const startDate = new Date();
+      startDate.setDate(startDate.getDate() - 7);
+
+      const startStr = startDate.toISOString().split('T')[0];
+      const endStr = endDate.toISOString().split('T')[0];
 
       const [sleepData, readinessData, activityData] = await Promise.all([
-        this.getSleepData(dateStr, dateStr),
-        this.getReadinessData(dateStr, dateStr),
-        this.getActivityData(dateStr, dateStr),
+        this.getSleepData(startStr, endStr),
+        this.getReadinessData(startStr, endStr),
+        this.getActivityData(startStr, endStr),
       ]);
 
+      // Filter for yesterday's data, or use most recent if yesterday not available
+      const yesterdaySleep = sleepData.find((s: any) => s.day === targetDate) || sleepData[sleepData.length - 1];
+      const yesterdayReadiness = readinessData.find((r: any) => r.day === targetDate) || readinessData[readinessData.length - 1];
+      const yesterdayActivity = activityData.find((a: any) => a.day === targetDate) || activityData[activityData.length - 1];
+
       return {
-        date: dateStr,
-        sleep: sleepData[0],
-        readiness: readinessData[0],
-        activity: activityData[0],
+        date: targetDate,
+        sleep: yesterdaySleep,
+        readiness: yesterdayReadiness,
+        activity: yesterdayActivity,
       };
     } catch (error: any) {
       console.error('Error fetching yesterday summary:', error.message);
