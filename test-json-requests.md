@@ -21,6 +21,22 @@ Test asking for resilience level.
       "userId": "amzn1.ask.account.test-user-id"
     }
   },
+  "context": {
+    "System": {
+      "application": {
+        "applicationId": "amzn1.ask.skill.be969732-cd70-4eb1-a7a8-100af42021c8"
+      },
+      "user": {
+        "userId": "amzn1.ask.account.test-user-id"
+      },
+      "device": {
+        "deviceId": "amzn1.ask.device.test-device-id",
+        "supportedInterfaces": {}
+      },
+      "apiEndpoint": "https://api.amazonalexa.com",
+      "apiAccessToken": "test-token"
+    }
+  },
   "request": {
     "type": "IntentRequest",
     "requestId": "amzn1.echo-api.request.test-request-id",
@@ -56,6 +72,22 @@ Test asking for 7-day trend analysis.
     },
     "user": {
       "userId": "amzn1.ask.account.test-user-id"
+    }
+  },
+  "context": {
+    "System": {
+      "application": {
+        "applicationId": "amzn1.ask.skill.be969732-cd70-4eb1-a7a8-100af42021c8"
+      },
+      "user": {
+        "userId": "amzn1.ask.account.test-user-id"
+      },
+      "device": {
+        "deviceId": "amzn1.ask.device.test-device-id",
+        "supportedInterfaces": {}
+      },
+      "apiEndpoint": "https://api.amazonalexa.com",
+      "apiAccessToken": "test-token"
     }
   },
   "request": {
@@ -95,6 +127,22 @@ Test the health summary which now includes resilience.
       "userId": "amzn1.ask.account.test-user-id"
     }
   },
+  "context": {
+    "System": {
+      "application": {
+        "applicationId": "amzn1.ask.skill.be969732-cd70-4eb1-a7a8-100af42021c8"
+      },
+      "user": {
+        "userId": "amzn1.ask.account.test-user-id"
+      },
+      "device": {
+        "deviceId": "amzn1.ask.device.test-device-id",
+        "supportedInterfaces": {}
+      },
+      "apiEndpoint": "https://api.amazonalexa.com",
+      "apiAccessToken": "test-token"
+    }
+  },
   "request": {
     "type": "IntentRequest",
     "requestId": "amzn1.echo-api.request.test-request-id",
@@ -132,6 +180,22 @@ Test the help intent which now mentions resilience and trends.
       "userId": "amzn1.ask.account.test-user-id"
     }
   },
+  "context": {
+    "System": {
+      "application": {
+        "applicationId": "amzn1.ask.skill.be969732-cd70-4eb1-a7a8-100af42021c8"
+      },
+      "user": {
+        "userId": "amzn1.ask.account.test-user-id"
+      },
+      "device": {
+        "deviceId": "amzn1.ask.device.test-device-id",
+        "supportedInterfaces": {}
+      },
+      "apiEndpoint": "https://api.amazonalexa.com",
+      "apiAccessToken": "test-token"
+    }
+  },
   "request": {
     "type": "IntentRequest",
     "requestId": "amzn1.echo-api.request.test-request-id",
@@ -150,6 +214,55 @@ Test the help intent which now mentions resilience and trends.
 
 ---
 
+## Test 5: LaunchRequest (Bonus Test)
+
+Test the skill launch to verify everything is working.
+
+**Voice equivalent:** "Alexa, open Oura Health"
+
+```json
+{
+  "version": "1.0",
+  "session": {
+    "new": true,
+    "sessionId": "amzn1.echo-api.session.test-session-id",
+    "application": {
+      "applicationId": "amzn1.ask.skill.be969732-cd70-4eb1-a7a8-100af42021c8"
+    },
+    "user": {
+      "userId": "amzn1.ask.account.test-user-id"
+    }
+  },
+  "context": {
+    "System": {
+      "application": {
+        "applicationId": "amzn1.ask.skill.be969732-cd70-4eb1-a7a8-100af42021c8"
+      },
+      "user": {
+        "userId": "amzn1.ask.account.test-user-id"
+      },
+      "device": {
+        "deviceId": "amzn1.ask.device.test-device-id",
+        "supportedInterfaces": {}
+      },
+      "apiEndpoint": "https://api.amazonalexa.com",
+      "apiAccessToken": "test-token"
+    }
+  },
+  "request": {
+    "type": "LaunchRequest",
+    "requestId": "amzn1.echo-api.request.test-request-id",
+    "timestamp": "2024-01-18T00:00:00Z",
+    "locale": "en-US"
+  }
+}
+```
+
+**Expected Response:**
+"Welcome to Oura Health. You can ask me about your sleep, readiness, or activity scores. What would you like to know?"
+
+---
+
 ## How to Test
 
 1. Start your local server: `npm start`
@@ -164,6 +277,10 @@ Test the help intent which now mentions resilience and trends.
 10. Check your npm server logs for any errors
 
 ## Troubleshooting
+
+**If you get "Context object of the skill request body does not contain a skill id":**
+- The context section is now included with the correct applicationId
+- Make sure you're copying the complete JSON including the context section
 
 **If you get "couldn't find your resilience data":**
 - Resilience requires Gen3/Ring 4 with active membership
