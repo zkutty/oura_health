@@ -148,6 +148,85 @@ const ActivityScoreIntentHandler: RequestHandler = {
   },
 };
 
+const ResilienceIntentHandler: RequestHandler = {
+  canHandle(handlerInput: HandlerInput): boolean {
+    return getRequestType(handlerInput.requestEnvelope) === 'IntentRequest'
+      && getIntentName(handlerInput.requestEnvelope) === 'ResilienceIntent';
+  },
+  async handle(handlerInput: HandlerInput): Promise<Response> {
+    const ouraService = new OuraService();
+
+    try {
+      const summary = await ouraService.getTodaySummary();
+
+      if (summary.resilience) {
+        const resilience = summary.resilience;
+
+        // Convert level to friendly description
+        const levelDescriptions: { [key: string]: string } = {
+          'exceptional': 'exceptional - you have achieved an ideal balance of stress and recovery',
+          'strong': 'strong - your body is in a great place to handle upcoming challenges',
+          'solid': 'solid - you have a good balance of stress and recovery',
+          'adequate': 'adequate - you are hanging in there, but there is room for improvement',
+          'limited': 'limited - there is a gap between your recovery and stress levels'
+        };
+
+        const description = levelDescriptions[resilience.level] || resilience.level;
+
+        const speakOutput = `Your resilience level is ${description}. ` +
+          `This is based on your balance of stress and recovery over the past two weeks.`;
+
+        return handlerInput.responseBuilder
+          .speak(speakOutput)
+          .getResponse();
+      } else {
+        return handlerInput.responseBuilder
+          .speak("I couldn't find your resilience data. You may need at least 5 days of data for Oura to calculate resilience.")
+          .getResponse();
+      }
+    } catch (error: any) {
+      console.error('Error fetching resilience:', error);
+      return handlerInput.responseBuilder
+        .speak("Sorry, I had trouble getting your resilience data. Please try again later.")
+        .getResponse();
+    }
+  },
+};
+
+const TrendReportIntentHandler: RequestHandler = {
+  canHandle(handlerInput: HandlerInput): boolean {
+    return getRequestType(handlerInput.requestEnvelope) === 'IntentRequest'
+      && getIntentName(handlerInput.requestEnvelope) === 'TrendReportIntent';
+  },
+  async handle(handlerInput: HandlerInput): Promise<Response> {
+    const ouraService = new OuraService();
+
+    try {
+      const trends = await ouraService.getSevenDayTrends();
+
+      const trendWords: { [key: string]: string } = {
+        'rising': 'improving',
+        'falling': 'declining',
+        'stable': 'holding steady'
+      };
+
+      const speakOutput = `Here are your seven-day trends. ` +
+        `Sleep: currently ${trends.sleep.current}, averaging ${trends.sleep.average}, ${trendWords[trends.sleep.trend]}. ` +
+        `Readiness: currently ${trends.readiness.current}, averaging ${trends.readiness.average}, ${trendWords[trends.readiness.trend]}. ` +
+        `Activity: currently ${trends.activity.current}, averaging ${trends.activity.average}, ${trendWords[trends.activity.trend]}.`;
+
+      return handlerInput.responseBuilder
+        .speak(speakOutput)
+        .getResponse();
+    } catch (error: any) {
+      console.error('Error fetching trends:', error);
+      return handlerInput.responseBuilder
+        .speak("Sorry, I had trouble calculating your trends. Please try again later.")
+        .getResponse();
+    }
+  },
+};
+
 const HealthSummaryIntentHandler: RequestHandler = {
   canHandle(handlerInput: HandlerInput): boolean {
     return getRequestType(handlerInput.requestEnvelope) === 'IntentRequest'
@@ -183,6 +262,10 @@ const HealthSummaryIntentHandler: RequestHandler = {
         speakOutput += `Activity score: ${activity.score}, with ${activity.steps} steps. `;
       }
 
+      if (summary.resilience) {
+        speakOutput += `Resilience: ${summary.resilience.level}. `;
+      }
+
       // Check and execute smart home actions
       if (smartHomeService.getConfig().enabled) {
         const executedActions = await smartHomeService.evaluateAndExecuteActions(summary);
@@ -209,7 +292,7 @@ const HelpIntentHandler: RequestHandler = {
       && getIntentName(handlerInput.requestEnvelope) === 'AMAZON.HelpIntent';
   },
   handle(handlerInput: HandlerInput): Response {
-    const speakOutput = 'You can ask me about your sleep score, readiness score, activity score, or get a complete health summary. What would you like to know?';
+    const speakOutput = 'You can ask me about your sleep score, readiness score, activity score, resilience level, seven-day trends, or get a complete health summary. What would you like to know?';
 
     return handlerInput.responseBuilder
       .speak(speakOutput)
@@ -254,6 +337,8 @@ export const skillBuilder = SkillBuilders.custom()
     ReadinessScoreIntentHandler,
     ActivityScoreIntentHandler,
     HealthSummaryIntentHandler,
+    ResilienceIntentHandler,
+    TrendReportIntentHandler,
     HelpIntentHandler,
     CancelAndStopIntentHandler
   )

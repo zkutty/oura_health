@@ -55,6 +55,34 @@
           ]
         },
         {
+          "name": "ResilienceIntent",
+          "samples": [
+            "what is my resilience",
+            "how is my resilience",
+            "tell me my resilience level",
+            "what's my resilience score",
+            "check my resilience",
+            "resilience",
+            "my resilience level",
+            "how resilient am I"
+          ]
+        },
+        {
+          "name": "TrendReportIntent",
+          "samples": [
+            "what are my trends",
+            "show me my trends",
+            "how am I trending",
+            "what's my seven day average",
+            "what's my weekly average",
+            "how are my scores trending",
+            "tell me my trends",
+            "trends",
+            "weekly trends",
+            "trend report"
+          ]
+        },
+        {
           "name": "AMAZON.CancelIntent",
           "samples": []
         },

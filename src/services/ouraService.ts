@@ -65,11 +65,23 @@ export interface OuraSessionData {
   };
 }
 
+export interface OuraResilienceData {
+  id: string;
+  day: string;
+  contributors: {
+    sleep_recovery: number;
+    daytime_recovery: number;
+    stress: number;
+  };
+  level: 'exceptional' | 'strong' | 'solid' | 'adequate' | 'limited';
+}
+
 export interface OuraDailySummary {
   date: string;
   sleep?: OuraSleepData;
   readiness?: OuraReadinessData;
   activity?: OuraActivityData;
+  resilience?: OuraResilienceData;
   heartRate?: OuraHeartRateData[];
   workouts?: OuraWorkoutData[];
   sessions?: OuraSessionData[];
@@ -229,6 +241,20 @@ export class OuraService {
     }
   }
 
+  async getResilienceData(startDate?: string, endDate?: string): Promise<OuraResilienceData[]> {
+    try {
+      const params: any = {};
+      if (startDate) params.start_date = startDate;
+      if (endDate) params.end_date = endDate;
+
+      const response = await this.client.get('/usercollection/daily_resilience', { params });
+      return response.data.data || [];
+    } catch (error: any) {
+      console.error('Error fetching resilience data:', error.message);
+      throw new Error('Failed to fetch resilience data from Oura');
+    }
+  }
+
   async getTodaySummary(): Promise<OuraDailySummary> {
     try {
       console.log(`[OuraService] Fetching latest health data (searching last 7 days)...`);
@@ -241,8 +267,8 @@ export class OuraService {
       const startStr = startDate.toISOString().split('T')[0];
       const endStr = endDate.toISOString().split('T')[0];
 
-      // Only fetch the essential metrics: sleep, readiness, activity
-      const [sleepData, readinessData, activityData] = await Promise.all([
+      // Only fetch the essential metrics: sleep, readiness, activity, resilience
+      const [sleepData, readinessData, activityData, resilienceData] = await Promise.all([
         this.getSleepData(startStr, endStr).catch((err) => {
           console.error('[OuraService] Sleep data fetch failed:', err.message);
           return [];
@@ -255,12 +281,17 @@ export class OuraService {
           console.error('[OuraService] Activity data fetch failed:', err.message);
           return [];
         }),
+        this.getResilienceData(startStr, endStr).catch((err) => {
+          console.error('[OuraService] Resilience data fetch failed:', err.message);
+          return [];
+        }),
       ]);
 
       // Get the most recent data by taking the last element (arrays are sorted by date)
       const latestSleep = sleepData.length > 0 ? sleepData[sleepData.length - 1] : undefined;
       const latestReadiness = readinessData.length > 0 ? readinessData[readinessData.length - 1] : undefined;
       const latestActivity = activityData.length > 0 ? activityData[activityData.length - 1] : undefined;
+      const latestResilience = resilienceData.length > 0 ? resilienceData[resilienceData.length - 1] : undefined;
 
       // Determine the date from the most recent data available
       let resultDate = endStr;
@@ -283,6 +314,7 @@ export class OuraService {
         sleep: latestSleep,
         readiness: latestReadiness,
         activity: latestActivity,
+        resilience: latestResilience,
       };
     } catch (error: any) {
       console.error('Error fetching today summary:', error.message);
@@ -371,6 +403,58 @@ export class OuraService {
       const readinessData = await this.getReadinessData();
       return readinessData.length > 0 ? readinessData[0] : null;
     } catch (error) {
+      throw error;
+    }
+  }
+
+  async getSevenDayTrends(): Promise<{
+    sleep: { current: number; average: number; trend: 'rising' | 'falling' | 'stable' };
+    readiness: { current: number; average: number; trend: 'rising' | 'falling' | 'stable' };
+    activity: { current: number; average: number; trend: 'rising' | 'falling' | 'stable' };
+  }> {
+    try {
+      // Fetch last 7 days
+      const endDate = new Date();
+      const startDate = new Date();
+      startDate.setDate(startDate.getDate() - 7);
+
+      const startStr = startDate.toISOString().split('T')[0];
+      const endStr = endDate.toISOString().split('T')[0];
+
+      const [sleepData, readinessData, activityData] = await Promise.all([
+        this.getSleepData(startStr, endStr),
+        this.getReadinessData(startStr, endStr),
+        this.getActivityData(startStr, endStr),
+      ]);
+
+      // Calculate averages
+      const sleepScores = sleepData.map((s: any) => s.score).filter((s: number) => s != null);
+      const readinessScores = readinessData.map((r: any) => r.score).filter((s: number) => s != null);
+      const activityScores = activityData.map((a: any) => a.score).filter((s: number) => s != null);
+
+      const sleepAvg = sleepScores.length > 0 ? sleepScores.reduce((a, b) => a + b, 0) / sleepScores.length : 0;
+      const readinessAvg = readinessScores.length > 0 ? readinessScores.reduce((a, b) => a + b, 0) / readinessScores.length : 0;
+      const activityAvg = activityScores.length > 0 ? activityScores.reduce((a, b) => a + b, 0) / activityScores.length : 0;
+
+      // Get current (latest) values
+      const currentSleep = sleepScores[sleepScores.length - 1] || 0;
+      const currentReadiness = readinessScores[readinessScores.length - 1] || 0;
+      const currentActivity = activityScores[activityScores.length - 1] || 0;
+
+      // Determine trends
+      const getTrend = (current: number, avg: number): 'rising' | 'falling' | 'stable' => {
+        const diff = current - avg;
+        if (Math.abs(diff) < 3) return 'stable';
+        return diff > 0 ? 'rising' : 'falling';
+      };
+
+      return {
+        sleep: { current: Math.round(currentSleep), average: Math.round(sleepAvg), trend: getTrend(currentSleep, sleepAvg) },
+        readiness: { current: Math.round(currentReadiness), average: Math.round(readinessAvg), trend: getTrend(currentReadiness, readinessAvg) },
+        activity: { current: Math.round(currentActivity), average: Math.round(activityAvg), trend: getTrend(currentActivity, activityAvg) },
+      };
+    } catch (error: any) {
+      console.error('Error calculating trends:', error.message);
       throw error;
     }
   }
