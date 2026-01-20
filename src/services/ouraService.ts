@@ -421,16 +421,52 @@ export class OuraService {
       const startStr = startDate.toISOString().split('T')[0];
       const endStr = endDate.toISOString().split('T')[0];
 
+      console.log(`[OuraService] Fetching trends data from ${startStr} to ${endStr}`);
+
       const [sleepData, readinessData, activityData] = await Promise.all([
-        this.getSleepData(startStr, endStr),
-        this.getReadinessData(startStr, endStr),
-        this.getActivityData(startStr, endStr),
+        this.getSleepData(startStr, endStr).catch((err) => {
+          console.error('[OuraService] Sleep data fetch failed in trends:', err.message);
+          return [];
+        }),
+        this.getReadinessData(startStr, endStr).catch((err) => {
+          console.error('[OuraService] Readiness data fetch failed in trends:', err.message);
+          return [];
+        }),
+        this.getActivityData(startStr, endStr).catch((err) => {
+          console.error('[OuraService] Activity data fetch failed in trends:', err.message);
+          return [];
+        }),
       ]);
 
-      // Calculate averages
-      const sleepScores = sleepData.map((s: any) => s.score).filter((s: number) => s != null);
-      const readinessScores = readinessData.map((r: any) => r.score).filter((s: number) => s != null);
-      const activityScores = activityData.map((a: any) => a.score).filter((s: number) => s != null);
+      console.log(`[OuraService] Trends data fetched - Sleep: ${sleepData.length}, Readiness: ${readinessData.length}, Activity: ${activityData.length}`);
+
+      // Extract scores - handle different possible structures
+      // Sleep score might be at s.score or nested differently
+      const sleepScores = sleepData
+        .map((s: any) => {
+          // Try multiple possible locations for sleep score
+          if (s.score != null && typeof s.score === 'number') return s.score;
+          if (s.contributors?.sleep_score != null) return s.contributors.sleep_score;
+          if (s.sleep_score != null) return s.sleep_score;
+          // Log if we can't find the score
+          console.warn('[OuraService] Sleep record missing score:', JSON.stringify(s).substring(0, 200));
+          return null;
+        })
+        .filter((s: number | null): s is number => s != null && typeof s === 'number');
+
+      const readinessScores = readinessData
+        .map((r: any) => r.score)
+        .filter((s: number | null | undefined): s is number => s != null && typeof s === 'number');
+
+      const activityScores = activityData
+        .map((a: any) => a.score)
+        .filter((s: number | null | undefined): s is number => s != null && typeof s === 'number');
+
+      console.log(`[OuraService] Extracted scores - Sleep: ${sleepScores.length}, Readiness: ${readinessScores.length}, Activity: ${activityScores.length}`);
+
+      if (sleepScores.length === 0 && sleepData.length > 0) {
+        console.warn('[OuraService] Sleep data exists but no scores extracted. Sample record:', JSON.stringify(sleepData[0], null, 2));
+      }
 
       const sleepAvg = sleepScores.length > 0 ? sleepScores.reduce((a, b) => a + b, 0) / sleepScores.length : 0;
       const readinessAvg = readinessScores.length > 0 ? readinessScores.reduce((a, b) => a + b, 0) / readinessScores.length : 0;
@@ -440,6 +476,8 @@ export class OuraService {
       const currentSleep = sleepScores[sleepScores.length - 1] || 0;
       const currentReadiness = readinessScores[readinessScores.length - 1] || 0;
       const currentActivity = activityScores[activityScores.length - 1] || 0;
+
+      console.log(`[OuraService] Trend calculations - Sleep: current=${currentSleep}, avg=${sleepAvg.toFixed(1)}`);
 
       // Determine trends
       const getTrend = (current: number, avg: number): 'rising' | 'falling' | 'stable' => {
@@ -454,7 +492,8 @@ export class OuraService {
         activity: { current: Math.round(currentActivity), average: Math.round(activityAvg), trend: getTrend(currentActivity, activityAvg) },
       };
     } catch (error: any) {
-      console.error('Error calculating trends:', error.message);
+      console.error('[OuraService] Error calculating trends:', error.message);
+      console.error('[OuraService] Error stack:', error.stack);
       throw error;
     }
   }
