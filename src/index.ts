@@ -10,6 +10,8 @@ import { PlaylistService } from './services/playlistService';
 import { GoveeService } from './services/goveeService';
 import { AlexaRoutineService } from './services/alexaRoutineService';
 import { LightingService } from './services/lightingService';
+import { GoogleSheetsService } from './services/googleSheetsService';
+import { SheetsExportService, DEFAULT_SHEETS_CONFIG, SheetsExportConfig } from './services/sheetsExportService';
 import { DataFreshnessChecker } from './utils/dataFreshnessChecker';
 import { EnergyLevel } from './services/playlistService';
 import * as fs from 'fs';
@@ -73,6 +75,30 @@ try {
   console.log('Spotify configuration loaded');
 } catch (error) {
   console.error('Failed to load Spotify configuration:', error);
+}
+
+// Initialize Google Sheets export service (optional)
+let sheetsExportService: SheetsExportService | null = null;
+try {
+  const sheetsConfigPath = path.join(__dirname, 'config', 'sheetsConfig.json');
+  const sheetsConfigData = fs.readFileSync(sheetsConfigPath, 'utf-8');
+  const sheetsConfig: SheetsExportConfig = {
+    ...DEFAULT_SHEETS_CONFIG,
+    ...JSON.parse(sheetsConfigData),
+  };
+  // Allow env override of spreadsheet id
+  if (process.env.GOOGLE_SHEETS_SPREADSHEET_ID) {
+    sheetsConfig.spreadsheetId = process.env.GOOGLE_SHEETS_SPREADSHEET_ID;
+  }
+  if (sheetsConfig.enabled) {
+    const googleSheets = new GoogleSheetsService();
+    sheetsExportService = new SheetsExportService(ouraService, googleSheets, sheetsConfig);
+    console.log('Sheets export service initialized');
+  } else {
+    console.log('Sheets export disabled in sheetsConfig.json');
+  }
+} catch (error: any) {
+  console.warn('Sheets export not initialized:', error.message);
 }
 
 // Load Lighting configuration
@@ -332,6 +358,55 @@ app.get('/lighting/config', (req, res) => {
   res.json(lightingService.getConfig());
 });
 
+// Google Sheets export endpoints
+app.post('/sheets/sync', async (req, res) => {
+  if (!sheetsExportService) {
+    return res.status(503).json({ success: false, error: 'Sheets export not configured' });
+  }
+  try {
+    const days = req.body?.days ? Number(req.body.days) : undefined;
+    const result = await sheetsExportService.syncRecent(days);
+    res.json({ success: true, ...result });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/sheets/sync-range', async (req, res) => {
+  if (!sheetsExportService) {
+    return res.status(503).json({ success: false, error: 'Sheets export not configured' });
+  }
+  try {
+    const { start, end } = req.body ?? {};
+    if (!start || !end) {
+      return res.status(400).json({ success: false, error: 'start and end (YYYY-MM-DD) are required' });
+    }
+    const result = await sheetsExportService.syncRange(start, end);
+    res.json({ success: true, ...result });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/sheets/setup', async (req, res) => {
+  if (!sheetsExportService) {
+    return res.status(503).json({ success: false, error: 'Sheets export not configured' });
+  }
+  try {
+    await sheetsExportService.ensureSpreadsheetSetup();
+    res.json({ success: true, message: 'Spreadsheet tabs and headers ensured' });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.get('/sheets/config', (req, res) => {
+  if (!sheetsExportService) {
+    return res.status(503).json({ error: 'Sheets export not configured' });
+  }
+  res.json(sheetsExportService.getConfig());
+});
+
 // Scheduled job to check health scores and trigger actions + lighting
 // Runs every morning at 7 AM
 cron.schedule('0 7 * * *', async () => {
@@ -441,6 +516,24 @@ cron.schedule('0 8-13 * * *', async () => {
   }
 });
 
+// Daily Oura → Google Sheets sync
+if (sheetsExportService) {
+  const cfg = sheetsExportService.getConfig();
+  cron.schedule(cfg.schedule, async () => {
+    if (!sheetsExportService) return;
+    console.log(`[SheetsSync] Running daily sync (last ${cfg.dailySyncDays} day(s))...`);
+    try {
+      const result = await sheetsExportService.syncRecent();
+      const totalsLine = Object.entries(result.totals)
+        .map(([tab, t]) => `${tab}=+${t.appended}/~${t.updated}`)
+        .join(', ');
+      console.log(`[SheetsSync] ✓ Days: ${result.daysProcessed.join(', ') || 'none'} | ${totalsLine}`);
+    } catch (error: any) {
+      console.error('[SheetsSync] Failed:', error.message);
+    }
+  });
+}
+
 // Start server
 app.listen(PORT, () => {
   console.log(`Oura Health Alexa Skill server running on port ${PORT}`);
@@ -464,5 +557,14 @@ app.listen(PORT, () => {
     console.log(`  Evening wind down: ${lightingConfig.automation.eveningWindDown.enabled ? 'enabled' : 'disabled'}`);
   } else {
     console.log(`Lighting automation: disabled`);
+  }
+
+  if (sheetsExportService) {
+    const cfg = sheetsExportService.getConfig();
+    console.log(`Sheets export: enabled`);
+    console.log(`  Spreadsheet: ${cfg.spreadsheetId || '(not configured — set GOOGLE_SHEETS_SPREADSHEET_ID)'}`);
+    console.log(`  Schedule: ${cfg.schedule} (last ${cfg.dailySyncDays} day(s))`);
+  } else {
+    console.log(`Sheets export: disabled`);
   }
 });

@@ -26,6 +26,14 @@ A comprehensive health automation system that integrates your Oura Ring data wit
 - Scheduled morning automation (7 AM)
 - Extensible framework for custom integrations
 
+### Daily Google Sheets Export
+- Pulls your Oura data every morning into a Google Sheet in your Drive
+- Structured tabs (`Daily Summary`, `Sleep`, `Readiness`, `Activity`,
+  `Resilience`, `Workouts`) plus a `Raw JSON` tab for full-fidelity history
+- Idempotent upsert by date — re-runs update rows in place, no duplicates
+- Designed so you can point Claude at the sheet for trend analysis. See
+  [Sheets Setup Guide](docs/sheets-setup.md).
+
 ## Quick Start
 
 ```bash
@@ -122,6 +130,12 @@ The system uses a unified 5-tier energy mapping for both music and lighting:
 ### Smart Home
 - `POST /trigger-smart-home` - Trigger actions
 - `GET /smart-home/config` - View config
+
+### Google Sheets Export
+- `POST /sheets/sync` - Sync recent days into the configured spreadsheet
+- `POST /sheets/sync-range` - Sync an explicit `{start,end}` window
+- `POST /sheets/setup` - Ensure tabs/headers exist
+- `GET /sheets/config` - View sheets export configuration
 
 ## Configuration Files
 
