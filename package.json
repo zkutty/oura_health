@@ -10,6 +10,9 @@
     "watch": "tsc --watch",
     "test-api": "ts-node scripts/test-api.ts",
     "setup-spotify": "ts-node scripts/setup-spotify-playlist.ts",
+    "setup-sheets": "ts-node scripts/setup-google-sheets.ts",
+    "backfill-sheets": "ts-node scripts/backfill-sheets.ts",
+    "sync-sheets": "ts-node scripts/sync-sheets.ts",
     "deploy": "serverless deploy",
     "deploy:prod": "serverless deploy --stage prod",
     "remove": "serverless remove",
@@ -30,6 +33,7 @@
     "ask-sdk": "^2.14.0",
     "axios": "^1.6.0",
     "dotenv": "^16.3.1",
+    "googleapis": "^144.0.0",
     "node-cron": "^3.0.3",
     "spotify-web-api-node": "^5.0.2"
   },

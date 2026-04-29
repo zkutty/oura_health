@@ -6,3 +6,5 @@ dist/
 *.swp
 *.swo
 *~
+credentials/
+*-service-account*.json

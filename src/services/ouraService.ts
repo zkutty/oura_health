@@ -241,6 +241,42 @@ export class OuraService {
     }
   }
 
+  /**
+   * Fetches daily_sleep records (one per day with a sleep score and contributors).
+   * Distinct from `/usercollection/sleep`, which returns granular per-period
+   * records (long_sleep, naps) and has no top-level score.
+   */
+  async getDailySleepData(startDate?: string, endDate?: string): Promise<any[]> {
+    try {
+      const params: any = {};
+      if (startDate) params.start_date = startDate;
+      if (endDate) params.end_date = endDate;
+      const response = await this.client.get('/usercollection/daily_sleep', { params });
+      return response.data.data || [];
+    } catch (error: any) {
+      console.error('Error fetching daily sleep data:', error.message);
+      throw new Error('Failed to fetch daily sleep data from Oura');
+    }
+  }
+
+  /**
+   * Generic Oura collection fetch. Returns the raw `data` array for any
+   * `/usercollection/*` endpoint, used by the sheets exporter to capture
+   * raw JSON for endpoints we don't model with typed methods.
+   */
+  async fetchCollection(collection: string, startDate?: string, endDate?: string): Promise<any[]> {
+    try {
+      const params: any = {};
+      if (startDate) params.start_date = startDate;
+      if (endDate) params.end_date = endDate;
+      const response = await this.client.get(`/usercollection/${collection}`, { params });
+      return response.data.data || [];
+    } catch (error: any) {
+      console.error(`Error fetching ${collection} data:`, error.message);
+      throw new Error(`Failed to fetch ${collection} data from Oura`);
+    }
+  }
+
   async getResilienceData(startDate?: string, endDate?: string): Promise<OuraResilienceData[]> {
     try {
       const params: any = {};

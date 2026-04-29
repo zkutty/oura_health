@@ -1,0 +1,16 @@
+{
+  "enabled": true,
+  "spreadsheetId": "",
+  "schedule": "0 6 * * *",
+  "dailySyncDays": 3,
+  "defaultBackfillDays": 30,
+  "tabs": {
+    "dailySummary": true,
+    "sleep": true,
+    "readiness": true,
+    "activity": true,
+    "resilience": true,
+    "workouts": true,
+    "rawJson": true
+  }
+}
