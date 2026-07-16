@@ -201,6 +201,90 @@ app.get('/test-oura-data', async (req, res) => {
   }
 });
 
+// Comprehensive Oura connection test - checks all endpoints and data flow
+app.get('/test-oura-connections', async (req, res) => {
+  const endDate = new Date();
+  const startDate = new Date();
+  startDate.setDate(startDate.getDate() - 7);
+  const startStr = startDate.toISOString().split('T')[0];
+  const endStr = endDate.toISOString().split('T')[0];
+
+  type EndpointResult = {
+    ok: boolean;
+    records?: number;
+    error?: string;
+    latest?: unknown;
+  };
+
+  const results: Record<string, EndpointResult> = {};
+  const tests: Array<{ name: string; fn: () => Promise<unknown[]> }> = [
+    { name: 'sleep', fn: () => ouraService.getSleepData(startStr, endStr) },
+    { name: 'readiness', fn: () => ouraService.getReadinessData(startStr, endStr) },
+    { name: 'activity', fn: () => ouraService.getActivityData(startStr, endStr) },
+    { name: 'resilience', fn: () => ouraService.getResilienceData(startStr, endStr) },
+    { name: 'heartRate', fn: () => ouraService.getHeartRateData(startStr, endStr) },
+    { name: 'workouts', fn: () => ouraService.getWorkoutData(startStr, endStr) },
+    { name: 'sessions', fn: () => ouraService.getSessionData(startStr, endStr) },
+  ];
+
+  for (const { name, fn } of tests) {
+    try {
+      const data = await fn();
+      const latest = Array.isArray(data) && data.length > 0 ? data[data.length - 1] : undefined;
+      results[name] = { ok: true, records: data.length, latest };
+    } catch (error: any) {
+      results[name] = { ok: false, error: error.message };
+    }
+  }
+
+  // Also test getTodaySummary and getSevenDayTrends (used by Alexa/scheduling)
+  try {
+    const summary = await ouraService.getTodaySummary();
+    results.todaySummary = {
+      ok: true,
+      latest: {
+        date: summary.date,
+        hasSleep: !!summary.sleep,
+        hasReadiness: !!summary.readiness,
+        hasActivity: !!summary.activity,
+        hasResilience: !!summary.resilience,
+      },
+    };
+  } catch (error: any) {
+    results.todaySummary = { ok: false, error: error.message };
+  }
+
+  try {
+    const trends = await ouraService.getSevenDayTrends();
+    results.sevenDayTrends = {
+      ok: true,
+      latest: {
+        sleep: trends.sleep,
+        readiness: trends.readiness,
+        activity: trends.activity,
+      },
+    };
+  } catch (error: any) {
+    results.sevenDayTrends = { ok: false, error: error.message };
+  }
+
+  const allOk = Object.values(results).every((r) => r.ok);
+  const connectionOk = results.sleep?.ok || results.readiness?.ok || results.activity?.ok;
+
+  res.json({
+    success: connectionOk,
+    message: connectionOk
+      ? (allOk ? 'All Oura connections and data flows are working.' : 'Core Oura data is flowing; some endpoints had issues.')
+      : 'Oura connection or auth failed for core endpoints.',
+    dateRange: { start: startStr, end: endStr },
+    endpoints: results,
+    summary: {
+      working: Object.entries(results).filter(([, r]) => r.ok).length,
+      total: Object.keys(results).length,
+    },
+  });
+});
+
 // Endpoint to manage smart home actions
 app.get('/smart-home/config', (req, res) => {
   res.json(smartHomeService.getConfig());
