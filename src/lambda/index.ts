@@ -14,6 +14,8 @@ import { AlexaRoutineService } from '../services/alexaRoutineService';
 import { LightingService } from '../services/lightingService';
 import { DataFreshnessChecker } from '../utils/dataFreshnessChecker';
 import { EnergyLevel } from '../services/playlistService';
+import { OuraExportService } from '../services/ouraExportService';
+import { GoogleDocsOuraPublisher } from '../services/googleDocsOuraPublisher';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -25,11 +27,15 @@ let goveeService: GoveeService | null = null;
 let alexaRoutineService: AlexaRoutineService | null = null;
 let lightingService: LightingService | null = null;
 let smartHomeService: SmartHomeService | null = null;
+let ouraExportService: OuraExportService | null = null;
+let googleDocsOuraPublisher: GoogleDocsOuraPublisher | null = null;
 
 function initializeServices() {
   if (ouraService) return; // Already initialized
 
   ouraService = new OuraService();
+  ouraExportService = new OuraExportService();
+  googleDocsOuraPublisher = new GoogleDocsOuraPublisher();
   spotifyService = new SpotifyService();
   playlistService = new PlaylistService(spotifyService);
   
@@ -141,7 +147,7 @@ const MAX_PLAYLIST_RETRIES = 5;
 async function attemptPlaylistGeneration() {
   initializeServices();
 
-  if (!ouraService || !playlistService || !lightingService) {
+  if (!ouraService || !playlistService || !lightingService || !ouraExportService || !googleDocsOuraPublisher) {
     throw new Error('Services not initialized');
   }
 
@@ -155,6 +161,14 @@ async function attemptPlaylistGeneration() {
       console.log(`Oura data is not fresh yet: ${status}. Will retry.`);
       playlistRetryCount++;
       return;
+    }
+
+    try {
+      const record = ouraExportService.toDailyExport(summary);
+      const published = await googleDocsOuraPublisher.publish(record);
+      if (published) console.log(`Published Oura data for ${record.date} to Google Docs.`);
+    } catch (error: any) {
+      console.error('Failed to publish Oura data to Google Docs:', error.message);
     }
 
     // Data is fresh, generate playlist

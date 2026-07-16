@@ -34,6 +34,12 @@ A comprehensive health automation system that integrates your Oura Ring data wit
 - Designed so you can point Claude at the sheet for trend analysis. See
   [Sheets Setup Guide](docs/sheets-setup.md).
 
+### Daily Google Docs Log
+- Publishes a date-specific sleep, readiness, and activity summary to one Google
+  Doc, replacing the same date on re-runs
+- Includes readable scores and machine-readable JSON for ChatGPT or Claude
+- Uses the same service-account access pattern as the Sheets exporter
+
 ## Quick Start
 
 ```bash
@@ -52,6 +58,22 @@ npm start
 Visit http://localhost:3000/health-summary to verify your Oura connection.
 
 For detailed setup instructions, see [Setup Guide](docs/setup.md).
+
+## Google Docs Oura Log
+
+Set `GOOGLE_OURA_DOCUMENT_ID`, `GOOGLE_SERVICE_ACCOUNT_EMAIL`, and
+`GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY`, then share the target Doc with the service
+account as an Editor. The scheduled Oura sync writes an AI-ready daily entry to
+that document.
+
+You can also run an export manually:
+
+```bash
+npm run export:oura -- --date 2026-07-16
+```
+
+The command writes a local JSON artifact under `data/exports/oura/` and publishes
+the same record to Google Docs when the Google credentials are configured.
 
 ## Architecture
 

@@ -104,6 +104,28 @@ Quick steps:
    LIGHTING_ENABLED=true
    ```
 
+### Google Docs Oura Log
+
+The daily Oura export can publish to a Google Doc in the same date-oriented form
+as the Hevy Training Log. The application uses a service account so it works from
+either your local server or AWS Lambda.
+
+1. In Google Cloud, create a service account and enable the Google Docs API.
+2. Create or select the Google Doc that will hold the Oura daily log.
+3. Share that Doc with the service account email as an Editor.
+4. Add the following to `.env`. Keep the private key on one line with literal
+   `\\n` characters for line breaks:
+
+   ```env
+   GOOGLE_OURA_DOCUMENT_ID=your_google_doc_id
+   GOOGLE_SERVICE_ACCOUNT_EMAIL=service-account@project-id.iam.gserviceaccount.com
+   GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\\n...\\n-----END PRIVATE KEY-----\\n"
+   ```
+
+When Oura sleep and readiness data are fresh, the scheduled workflow writes an
+entry such as `Oura Daily Summary: 2026-07-16`. Reprocessing the day replaces the
+matching marked entry instead of adding a duplicate.
+
 ---
 
 ## Alexa Skill Setup

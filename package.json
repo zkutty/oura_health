@@ -13,6 +13,7 @@
     "setup-sheets": "ts-node scripts/setup-google-sheets.ts",
     "backfill-sheets": "ts-node scripts/backfill-sheets.ts",
     "sync-sheets": "ts-node scripts/sync-sheets.ts",
+    "export:oura": "ts-node src/scripts/export-oura.ts",
     "deploy": "serverless deploy",
     "deploy:prod": "serverless deploy --stage prod",
     "remove": "serverless remove",

@@ -1,6 +1,7 @@
 import axios, { AxiosInstance } from 'axios';
 
 export interface OuraSleepData {
+  day: string;
   score: number;
   total_sleep_duration: number;
   deep_sleep_duration: number;
@@ -12,6 +13,7 @@ export interface OuraSleepData {
 }
 
 export interface OuraReadinessData {
+  day: string;
   score: number;
   temperature_deviation: number;
   resting_heart_rate: number;
@@ -20,6 +22,7 @@ export interface OuraReadinessData {
 }
 
 export interface OuraActivityData {
+  day: string;
   score: number;
   steps: number;
   calories_total: number;
@@ -323,21 +326,18 @@ export class OuraService {
         }),
       ]);
 
-      // Get the most recent data by taking the last element (arrays are sorted by date)
-      const latestSleep = sleepData.length > 0 ? sleepData[sleepData.length - 1] : undefined;
-      const latestReadiness = readinessData.length > 0 ? readinessData[readinessData.length - 1] : undefined;
-      const latestActivity = activityData.length > 0 ? activityData[activityData.length - 1] : undefined;
-      const latestResilience = resilienceData.length > 0 ? resilienceData[resilienceData.length - 1] : undefined;
+      const latestSleep = this.getLatestRecord(sleepData);
+      const latestReadiness = this.getLatestRecord(readinessData);
+      const latestActivity = this.getLatestRecord(activityData);
+      const latestResilience = this.getLatestRecord(resilienceData);
 
-      // Determine the date from the most recent data available
-      let resultDate = endStr;
-      if (latestSleep && 'day' in latestSleep) {
-        resultDate = (latestSleep as any).day;
-      } else if (latestReadiness && 'day' in latestReadiness) {
-        resultDate = (latestReadiness as any).day;
-      } else if (latestActivity && 'day' in latestActivity) {
-        resultDate = (latestActivity as any).day;
-      }
+      // Readiness represents the current recovery day. Prefer it so all exported
+      // metrics can be selected for one stable calendar date.
+      const resultDate = latestReadiness?.day
+        ?? latestSleep?.day
+        ?? latestActivity?.day
+        ?? latestResilience?.day
+        ?? endStr;
 
       console.log(`[OuraService] ✓ Latest data from ${resultDate} - Sleep: ${sleepData.length}, Readiness: ${readinessData.length}, Activity: ${activityData.length} total records`);
 
@@ -347,15 +347,43 @@ export class OuraService {
 
       return {
         date: resultDate,
-        sleep: latestSleep,
-        readiness: latestReadiness,
-        activity: latestActivity,
-        resilience: latestResilience,
+        sleep: this.getRecordForDay(sleepData, resultDate),
+        readiness: this.getRecordForDay(readinessData, resultDate),
+        activity: this.getRecordForDay(activityData, resultDate),
+        resilience: this.getRecordForDay(resilienceData, resultDate),
       };
     } catch (error: any) {
       console.error('Error fetching today summary:', error.message);
       throw error;
     }
+  }
+
+  async getSummaryForDate(date: string): Promise<OuraDailySummary> {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      throw new Error('Date must use YYYY-MM-DD format.');
+    }
+
+    // Oura's date filtering is more reliable over a small range than a
+    // single-day request. Select the requested day's records after fetching.
+    const end = new Date(`${date}T12:00:00.000Z`);
+    const start = new Date(end);
+    start.setUTCDate(start.getUTCDate() - 7);
+    const startDate = start.toISOString().split('T')[0];
+
+    const [sleepData, readinessData, activityData, resilienceData] = await Promise.all([
+      this.getSleepData(startDate, date),
+      this.getReadinessData(startDate, date),
+      this.getActivityData(startDate, date),
+      this.getResilienceData(startDate, date),
+    ]);
+
+    return {
+      date,
+      sleep: this.getRecordForDay(sleepData, date),
+      readiness: this.getRecordForDay(readinessData, date),
+      activity: this.getRecordForDay(activityData, date),
+      resilience: this.getRecordForDay(resilienceData, date),
+    };
   }
 
   async getYesterdaySummary(): Promise<OuraDailySummary> {
@@ -397,38 +425,13 @@ export class OuraService {
   }
 
   async getLatestSummary(): Promise<OuraDailySummary> {
-    try {
-      // Get the most recent available data (usually today's or yesterday's)
-      const [sleepData, readinessData, activityData] = await Promise.all([
-        this.getSleepData(),
-        this.getReadinessData(),
-        this.getActivityData(),
-      ]);
-
-      // Use the most recent date available
-      let dateStr = new Date().toISOString().split('T')[0];
-      if (readinessData.length > 0 && readinessData[0]) {
-        dateStr = readinessData[0].toString().split('T')[0];
-      } else if (sleepData.length > 0 && sleepData[0]) {
-        dateStr = sleepData[0].toString().split('T')[0];
-      }
-
-      return {
-        date: dateStr,
-        sleep: sleepData[0],
-        readiness: readinessData[0],
-        activity: activityData[0],
-      };
-    } catch (error: any) {
-      console.error('Error fetching latest summary:', error.message);
-      throw error;
-    }
+    return this.getTodaySummary();
   }
 
   async getLatestSleep(): Promise<OuraSleepData | null> {
     try {
       const sleepData = await this.getSleepData();
-      return sleepData.length > 0 ? sleepData[0] : null;
+      return this.getLatestRecord(sleepData) ?? null;
     } catch (error) {
       throw error;
     }
@@ -437,7 +440,7 @@ export class OuraService {
   async getLatestReadiness(): Promise<OuraReadinessData | null> {
     try {
       const readinessData = await this.getReadinessData();
-      return readinessData.length > 0 ? readinessData[0] : null;
+      return this.getLatestRecord(readinessData) ?? null;
     } catch (error) {
       throw error;
     }
@@ -532,5 +535,13 @@ export class OuraService {
       console.error('[OuraService] Error stack:', error.stack);
       throw error;
     }
+  }
+
+  private getLatestRecord<T extends { day: string }>(records: T[]): T | undefined {
+    return [...records].sort((a, b) => a.day.localeCompare(b.day)).at(-1);
+  }
+
+  private getRecordForDay<T extends { day: string }>(records: T[], date: string): T | undefined {
+    return records.find((record) => record.day === date);
   }
 }

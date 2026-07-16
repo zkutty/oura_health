@@ -14,6 +14,8 @@ import { GoogleSheetsService } from './services/googleSheetsService';
 import { SheetsExportService, DEFAULT_SHEETS_CONFIG, SheetsExportConfig } from './services/sheetsExportService';
 import { DataFreshnessChecker } from './utils/dataFreshnessChecker';
 import { EnergyLevel } from './services/playlistService';
+import { OuraExportService } from './services/ouraExportService';
+import { GoogleDocsOuraPublisher } from './services/googleDocsOuraPublisher';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -25,6 +27,8 @@ const PORT = process.env.PORT || 3000;
 
 // Initialize services
 const ouraService = new OuraService();
+const ouraExportService = new OuraExportService();
+const googleDocsOuraPublisher = new GoogleDocsOuraPublisher();
 const spotifyService = new SpotifyService();
 const playlistService = new PlaylistService(spotifyService);
 
@@ -463,6 +467,20 @@ async function attemptPlaylistGeneration() {
       console.log(`Oura data is not fresh yet: ${status}. Will retry in 1 hour.`);
       playlistRetryCount++;
       return;
+    }
+
+    try {
+      const record = ouraExportService.toDailyExport(summary);
+      const exportResult = await ouraExportService.exportDailyRecord(record);
+      console.log(`Exported Oura data for ${exportResult.date} to ${exportResult.jsonlPath}`);
+
+      const googleDocsResult = await googleDocsOuraPublisher.publish(record);
+      if (googleDocsResult) {
+        console.log(`Published Oura data for ${record.date} to Google Docs.`);
+      }
+    } catch (error: any) {
+      // The playlist workflow should remain available if the local sync target is down.
+      console.error('Failed to export Oura data:', error.message);
     }
 
     // Data is fresh, generate playlist
