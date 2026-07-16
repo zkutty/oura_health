@@ -126,6 +126,42 @@ When Oura sleep and readiness data are fresh, the scheduled workflow writes an
 entry such as `Oura Daily Summary: 2026-07-16`. Reprocessing the day replaces the
 matching marked entry instead of adding a duplicate.
 
+### Oura Webhooks
+
+Webhooks replace routine polling once the Lambda deployment is public. The GET
+and POST endpoints are separate from the general Express REST API; the POST
+endpoint validates Oura's HMAC signature over the raw request body, rejects
+requests more than five minutes old or duplicate deliveries, and queues valid
+events for later work.
+
+1. Generate a high-entropy verification token and set it with the other Oura
+   credentials. Do not commit it:
+
+   ```env
+   OURA_WEBHOOK_VERIFICATION_TOKEN=replace-with-a-random-secret
+   OURA_WEBHOOK_CALLBACK_URL=https://YOUR_API_ID.execute-api.us-east-1.amazonaws.com/dev/oura-webhook
+   OURA_WEBHOOK_EVENT_TYPES=update
+   ```
+
+2. Deploy with `npm run deploy`. Copy the deployed API Gateway URL into
+   `OURA_WEBHOOK_CALLBACK_URL`, including the stage and `/oura-webhook` path.
+3. Create missing subscriptions (safe to re-run):
+
+   ```bash
+   npm run manage:oura-webhooks
+   ```
+
+   The command subscribes to `sleep` and `daily_readiness` updates using the
+   configured callback URL. Oura verifies the GET endpoint during creation.
+
+4. Send an Oura test event and check CloudWatch for a generic queued-event log.
+   Event payloads, signatures, client secrets, and verification tokens are never
+   written to logs.
+
+The queue consumer currently receives the verified event only. `ZK-206` will
+fetch and export the changed day, preserving the webhook receiver's quick
+response path.
+
 ---
 
 ## Alexa Skill Setup

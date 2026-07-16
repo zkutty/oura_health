@@ -2,8 +2,15 @@ import {
   APIGatewayProxyEvent, 
   APIGatewayProxyResult, 
   Context,
+  SQSEvent,
   ScheduledEvent 
 } from 'aws-lambda';
+import { SendMessageCommand, SQSClient } from '@aws-sdk/client-sqs';
+import {
+  ConditionalCheckFailedException,
+  DynamoDBClient,
+  PutItemCommand,
+} from '@aws-sdk/client-dynamodb';
 import { skillBuilder } from '../handlers/alexaHandlers';
 import { OuraService } from '../services/ouraService';
 import { SmartHomeService } from '../services/smartHomeService';
@@ -16,6 +23,12 @@ import { DataFreshnessChecker } from '../utils/dataFreshnessChecker';
 import { EnergyLevel } from '../services/playlistService';
 import { OuraExportService } from '../services/ouraExportService';
 import { GoogleDocsOuraPublisher } from '../services/googleDocsOuraPublisher';
+import {
+  createOuraWebhookReplayKey,
+  parseOuraWebhookEvent,
+  QueuedOuraWebhookEvent,
+  verifyOuraWebhookSignature,
+} from '../services/ouraWebhookService';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -29,6 +42,14 @@ let lightingService: LightingService | null = null;
 let smartHomeService: SmartHomeService | null = null;
 let ouraExportService: OuraExportService | null = null;
 let googleDocsOuraPublisher: GoogleDocsOuraPublisher | null = null;
+const sqs = new SQSClient({});
+const dynamoDb = new DynamoDBClient({});
+
+const webhookResponse = (statusCode: number, body: string): APIGatewayProxyResult => ({
+  statusCode,
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ message: body }),
+});
 
 function initializeServices() {
   if (ouraService) return; // Already initialized
@@ -82,9 +103,91 @@ function initializeServices() {
 
 /**
  * Lambda handler for Alexa Skill requests
- * Uses the skillBuilder directly (Lambda adapter)
+ * Invokes the constructed custom skill directly.
  */
-export const alexaHandler = skillBuilder.lambda();
+export const alexaHandler = async (event: unknown, context: Context) =>
+  skillBuilder.invoke(event as any, context);
+
+/** Handles Oura's endpoint-verification challenge. */
+export const ouraWebhookVerification = async (
+  event: APIGatewayProxyEvent
+): Promise<APIGatewayProxyResult> => {
+  const token = event.queryStringParameters?.verification_token;
+  const challenge = event.queryStringParameters?.challenge;
+  if (!token || token !== process.env.OURA_WEBHOOK_VERIFICATION_TOKEN || !challenge) {
+    console.warn('Rejected Oura webhook verification request.');
+    return webhookResponse(401, 'Unauthorized');
+  }
+
+  return {
+    statusCode: 200,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ challenge }),
+  };
+};
+
+/** Verifies Oura deliveries and queues them without fetching health data inline. */
+export const ouraWebhookReceiver = async (
+  event: APIGatewayProxyEvent
+): Promise<APIGatewayProxyResult> => {
+  const rawBody = event.isBase64Encoded
+    ? Buffer.from(event.body || '', 'base64').toString('utf8')
+    : event.body || '';
+  const timestamp = event.headers['x-oura-timestamp'] || event.headers['X-Oura-Timestamp'];
+  const signature = event.headers['x-oura-signature'] || event.headers['X-Oura-Signature'];
+
+  if (!verifyOuraWebhookSignature(rawBody, timestamp, signature, process.env.OURA_CLIENT_SECRET || '')) {
+    console.warn('Rejected Oura webhook delivery: invalid signature or timestamp.');
+    return webhookResponse(401, 'Unauthorized');
+  }
+
+  const ouraEvent = parseOuraWebhookEvent(rawBody);
+  if (!ouraEvent) {
+    console.warn('Rejected Oura webhook delivery: malformed event.');
+    return webhookResponse(400, 'Invalid payload');
+  }
+
+  const queueUrl = process.env.OURA_WEBHOOK_QUEUE_URL;
+  const replayTable = process.env.OURA_WEBHOOK_REPLAY_TABLE;
+  if (!queueUrl || !replayTable) {
+    console.error('Oura webhook queue is not configured.');
+    return webhookResponse(503, 'Unavailable');
+  }
+
+  const replayKey = createOuraWebhookReplayKey(rawBody, timestamp!);
+  const now = Math.floor(Date.now() / 1000);
+  try {
+    await dynamoDb.send(new PutItemCommand({
+      TableName: replayTable,
+      Item: {
+        eventId: { S: replayKey },
+        expiresAt: { N: String(now + 600) },
+      },
+      ConditionExpression: 'attribute_not_exists(eventId) OR expiresAt < :now',
+      ExpressionAttributeValues: { ':now': { N: String(now) } },
+    }));
+  } catch (error) {
+    if (error instanceof ConditionalCheckFailedException || (error as any)?.name === 'ConditionalCheckFailedException') {
+      console.warn('Rejected Oura webhook delivery: replayed event.');
+      return webhookResponse(409, 'Replay detected');
+    }
+    console.error('Unable to record Oura webhook event.');
+    return webhookResponse(503, 'Unavailable');
+  }
+
+  const message: QueuedOuraWebhookEvent = { receivedAt: new Date().toISOString(), event: ouraEvent };
+  await sqs.send(new SendMessageCommand({ QueueUrl: queueUrl, MessageBody: JSON.stringify(message) }));
+  console.log(`Queued Oura webhook event: ${ouraEvent.event_type}/${ouraEvent.data_type}.`);
+  return webhookResponse(202, 'Accepted');
+};
+
+/** Placeholder consumer: ZK-206 turns queued events into idempotent daily exports. */
+export const processOuraWebhook = async (event: SQSEvent): Promise<void> => {
+  for (const record of event.Records) {
+    const message = JSON.parse(record.body) as QueuedOuraWebhookEvent;
+    console.log(`Received queued Oura webhook event: ${message.event.event_type}/${message.event.data_type}.`);
+  }
+};
 
 /**
  * Lambda handler for scheduled morning automation (7 AM)

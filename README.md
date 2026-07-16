@@ -1,5 +1,11 @@
 # Oura Health Integration System
 
+## Build and deployment
+
+`npm run build` produces deployable JavaScript and copies runtime configuration
+into `dist/config`. Use `npm run package` to validate the Lambda artifact without
+deploying, or `npm run deploy` to build and deploy it.
+
 A comprehensive health automation system that integrates your Oura Ring data with Spotify, smart lighting, and Alexa to create an adaptive environment based on your sleep, readiness, and activity scores.
 
 ## Features

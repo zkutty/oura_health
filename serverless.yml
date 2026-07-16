@@ -16,6 +16,11 @@ provider:
     OURA_REFRESH_TOKEN: ${env:OURA_REFRESH_TOKEN, ''}
     OURA_CLIENT_ID: ${env:OURA_CLIENT_ID, ''}
     OURA_CLIENT_SECRET: ${env:OURA_CLIENT_SECRET, ''}
+    OURA_WEBHOOK_VERIFICATION_TOKEN: ${env:OURA_WEBHOOK_VERIFICATION_TOKEN, ''}
+    OURA_WEBHOOK_QUEUE_URL:
+      Ref: OuraWebhookQueue
+    OURA_WEBHOOK_REPLAY_TABLE:
+      Ref: OuraWebhookReplayTable
     SPOTIFY_CLIENT_ID: ${env:SPOTIFY_CLIENT_ID}
     SPOTIFY_CLIENT_SECRET: ${env:SPOTIFY_CLIENT_SECRET}
     SPOTIFY_ACCESS_TOKEN: ${env:SPOTIFY_ACCESS_TOKEN}
@@ -37,6 +42,29 @@ provider:
             - logs:CreateLogStream
             - logs:PutLogEvents
           Resource: '*'
+        - Effect: Allow
+          Action:
+            - sqs:SendMessage
+          Resource:
+            Fn::GetAtt:
+              - OuraWebhookQueue
+              - Arn
+        - Effect: Allow
+          Action:
+            - dynamodb:PutItem
+          Resource:
+            Fn::GetAtt:
+              - OuraWebhookReplayTable
+              - Arn
+        - Effect: Allow
+          Action:
+            - sqs:ReceiveMessage
+            - sqs:DeleteMessage
+            - sqs:GetQueueAttributes
+          Resource:
+            Fn::GetAtt:
+              - OuraWebhookQueue
+              - Arn
 
 functions:
   # Alexa Skill endpoint
@@ -47,6 +75,32 @@ functions:
           path: /alexa
           method: post
           cors: true
+
+  ouraWebhookVerification:
+    handler: dist/lambda/index.ouraWebhookVerification
+    timeout: 10
+    events:
+      - http:
+          path: /oura-webhook
+          method: get
+
+  ouraWebhookReceiver:
+    handler: dist/lambda/index.ouraWebhookReceiver
+    timeout: 10
+    events:
+      - http:
+          path: /oura-webhook
+          method: post
+
+  ouraWebhookProcessor:
+    handler: dist/lambda/index.processOuraWebhook
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt:
+              - OuraWebhookQueue
+              - Arn
+          batchSize: 1
 
   # Morning automation - runs at 7:00 AM daily
   morningAutomation:
@@ -84,9 +138,6 @@ functions:
           enabled: true
           description: Evening wind-down lighting
 
-plugins:
-  - serverless-plugin-typescript
-
 package:
   patterns:
     - '!src/**'
@@ -99,10 +150,29 @@ package:
     - '!.git/**'
     - '!.env*'
     - 'dist/**'
+    - 'dist/config/**'
     - 'node_modules/**'
 
 resources:
   Resources:
+    OuraWebhookQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        VisibilityTimeout: 120
+        MessageRetentionPeriod: 1209600
+    OuraWebhookReplayTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: eventId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: eventId
+            KeyType: HASH
+        TimeToLiveSpecification:
+          AttributeName: expiresAt
+          Enabled: true
     OuraHealthLogGroup:
       Type: AWS::Logs::LogGroup
       Properties:
