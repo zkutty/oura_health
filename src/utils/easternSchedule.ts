@@ -46,3 +46,18 @@ export function isEasternScheduleRange(
     && eastern.hour >= schedule.startHour
     && eastern.hour <= schedule.endHour;
 }
+
+export function getEasternDate(timestamp: string | Date): string {
+  const date = typeof timestamp === 'string' ? new Date(timestamp) : timestamp;
+  if (Number.isNaN(date.getTime())) {
+    throw new Error(`Invalid schedule timestamp: ${String(timestamp)}`);
+  }
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: AUTOMATION_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+  const value = (type: Intl.DateTimeFormatPartTypes) => parts.find(part => part.type === type)?.value;
+  return `${value('year')}-${value('month')}-${value('day')}`;
+}

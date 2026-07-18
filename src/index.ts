@@ -343,7 +343,7 @@ app.get('/spotify/playlist-status', async (req, res) => {
     const playlist = await spotifyService.getPlaylist(config.targetPlaylistId);
     res.json({
       name: playlist.name,
-      trackCount: playlist.tracks?.total || 0,
+      trackCount: playlist.items?.total || playlist.tracks?.total || 0,
       lastModified: playlist.snapshot_id,
     });
   } catch (error: any) {

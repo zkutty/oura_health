@@ -1,4 +1,5 @@
 import axios, { AxiosInstance } from 'axios';
+import { createOAuthTokenStore, OAuthTokenStore } from './oauthTokenStore';
 
 export interface SpotifyTrack {
   id: string;
@@ -6,7 +7,9 @@ export interface SpotifyTrack {
   artists: string[];
   uri: string;
   duration_ms: number;
-  popularity: number;
+  popularity?: number;
+  sourceTags?: string[];
+  sourceWeight?: number;
 }
 
 export interface AudioFeatures {
@@ -26,18 +29,18 @@ export interface SpotifyPlaylist {
     total: number;
     items: any[];
   };
+  items?: {
+    total: number;
+    items: any[];
+  };
   snapshot_id: string;
 }
 
-export interface RecommendationParams {
-  seedTracks?: string[];
-  seedArtists?: string[];
-  seedGenres?: string[];
-  targetEnergy?: number;
-  targetValence?: number;
-  minEnergy?: number;
-  maxEnergy?: number;
-  limit?: number;
+export class SpotifyApiError extends Error {
+  constructor(message: string, public readonly status?: number) {
+    super(message);
+    this.name = 'SpotifyApiError';
+  }
 }
 
 export class SpotifyService {
@@ -47,12 +50,16 @@ export class SpotifyService {
   private clientId: string;
   private clientSecret: string;
   private userId: string | null = null;
+  private refreshPromise?: Promise<void>;
+  private tokenLoadPromise?: Promise<void>;
+  private readonly tokenStore?: OAuthTokenStore;
 
-  constructor() {
+  constructor(tokenStore: OAuthTokenStore | undefined = createOAuthTokenStore('SPOTIFY')) {
     this.accessToken = process.env.SPOTIFY_ACCESS_TOKEN || '';
     this.refreshToken = process.env.SPOTIFY_REFRESH_TOKEN || '';
     this.clientId = process.env.SPOTIFY_CLIENT_ID || '';
     this.clientSecret = process.env.SPOTIFY_CLIENT_SECRET || '';
+    this.tokenStore = tokenStore;
 
     this.client = axios.create({
       baseURL: 'https://api.spotify.com/v1',
@@ -62,16 +69,24 @@ export class SpotifyService {
       },
     });
 
+    this.client.interceptors.request.use(async (config) => {
+      await this.ensureTokensLoaded();
+      config.headers.Authorization = `Bearer ${this.accessToken}`;
+      return config;
+    });
+
     // Add response interceptor to handle token refresh
     this.client.interceptors.response.use(
       (response) => response,
       async (error) => {
-        if (error.response?.status === 401 && this.refreshToken) {
+        const requestConfig = error.config as (typeof error.config & { _spotifyRefreshRetried?: boolean });
+        if (error.response?.status === 401 && this.refreshToken && !requestConfig?._spotifyRefreshRetried) {
           try {
-            await this.refreshAccessToken();
+            requestConfig._spotifyRefreshRetried = true;
+            await this.refreshAccessTokenOnce();
             // Retry the original request
-            error.config.headers.Authorization = `Bearer ${this.accessToken}`;
-            return this.client.request(error.config);
+            requestConfig.headers.Authorization = `Bearer ${this.accessToken}`;
+            return this.client.request(requestConfig);
           } catch (refreshError) {
             throw refreshError;
           }
@@ -81,11 +96,36 @@ export class SpotifyService {
     );
   }
 
+  private ensureTokensLoaded(): Promise<void> {
+    if (!this.tokenStore) return Promise.resolve();
+    if (!this.tokenLoadPromise) {
+      this.tokenLoadPromise = this.tokenStore.load().then((tokens) => {
+        if (!tokens) return;
+        this.accessToken = tokens.accessToken;
+        this.refreshToken = tokens.refreshToken;
+        this.client.defaults.headers.Authorization = `Bearer ${this.accessToken}`;
+      }).catch((error: any) => {
+        throw new Error(`Failed to load persisted Spotify OAuth tokens: ${error.message}`);
+      });
+    }
+    return this.tokenLoadPromise;
+  }
+
+  private refreshAccessTokenOnce(): Promise<void> {
+    if (!this.refreshPromise) {
+      this.refreshPromise = this.refreshAccessToken().finally(() => {
+        this.refreshPromise = undefined;
+      });
+    }
+    return this.refreshPromise;
+  }
+
   private async refreshAccessToken(): Promise<void> {
+    let response;
     try {
       const authString = Buffer.from(`${this.clientId}:${this.clientSecret}`).toString('base64');
 
-      const response = await axios.post('https://accounts.spotify.com/api/token',
+      response = await axios.post('https://accounts.spotify.com/api/token',
         new URLSearchParams({
           grant_type: 'refresh_token',
           refresh_token: this.refreshToken,
@@ -98,16 +138,27 @@ export class SpotifyService {
         }
       );
 
-      this.accessToken = response.data.access_token;
-      if (response.data.refresh_token) {
-        this.refreshToken = response.data.refresh_token;
-      }
-
-      // Update the default authorization header
-      this.client.defaults.headers.Authorization = `Bearer ${this.accessToken}`;
     } catch (error) {
       throw new Error('Failed to refresh Spotify access token');
     }
+
+    this.accessToken = response.data.access_token;
+    if (response.data.refresh_token) {
+      this.refreshToken = response.data.refresh_token;
+    }
+    this.client.defaults.headers.Authorization = `Bearer ${this.accessToken}`;
+
+    if (this.tokenStore) {
+      try {
+        await this.tokenStore.save({ accessToken: this.accessToken, refreshToken: this.refreshToken });
+      } catch (error: any) {
+        throw new Error(`Failed to persist refreshed Spotify OAuth tokens: ${error.message}`);
+      }
+    }
+  }
+
+  private apiError(message: string, error: any): SpotifyApiError {
+    return new SpotifyApiError(message, error.response?.status);
   }
 
   private async getUserId(): Promise<string> {
@@ -121,27 +172,34 @@ export class SpotifyService {
       return this.userId as string;
     } catch (error: any) {
       console.error('Error fetching user profile:', error.message);
-      throw new Error('Failed to fetch Spotify user profile');
+      throw this.apiError('Failed to fetch Spotify user profile', error);
     }
   }
 
   async getUserSavedTracks(limit: number = 50, offset: number = 0): Promise<SpotifyTrack[]> {
     try {
-      const response = await this.client.get('/me/tracks', {
-        params: { limit, offset },
-      });
-
-      return response.data.items.map((item: any) => ({
-        id: item.track.id,
-        name: item.track.name,
-        artists: item.track.artists.map((a: any) => a.name),
-        uri: item.track.uri,
-        duration_ms: item.track.duration_ms,
-        popularity: item.track.popularity,
-      }));
+      const requested = Math.max(0, limit);
+      const tracks: SpotifyTrack[] = [];
+      while (tracks.length < requested) {
+        const pageLimit = Math.min(50, requested - tracks.length);
+        const response = await this.client.get('/me/tracks', {
+          params: { limit: pageLimit, offset: offset + tracks.length },
+        });
+        const page = response.data.items.map((item: any) => ({
+          id: item.track.id,
+          name: item.track.name,
+          artists: item.track.artists.map((a: any) => a.name),
+          uri: item.track.uri,
+          duration_ms: item.track.duration_ms,
+          popularity: item.track.popularity,
+        }));
+        tracks.push(...page);
+        if (!response.data.next || page.length === 0) break;
+      }
+      return tracks;
     } catch (error: any) {
       console.error('Error fetching saved tracks:', error.message);
-      throw new Error('Failed to fetch saved tracks from Spotify');
+      throw this.apiError('Failed to fetch saved tracks from Spotify', error);
     }
   }
 
@@ -155,118 +213,43 @@ export class SpotifyService {
         id: playlist.id,
         name: playlist.name,
         description: playlist.description || '',
-        tracks: playlist.tracks,
+        items: playlist.items,
         snapshot_id: playlist.snapshot_id,
       }));
     } catch (error: any) {
       console.error('Error fetching user playlists:', error.message);
-      throw new Error('Failed to fetch playlists from Spotify');
+      throw this.apiError('Failed to fetch playlists from Spotify', error);
     }
   }
 
-  async getPlaylistTracks(playlistId: string): Promise<SpotifyTrack[]> {
+  async getPlaylistTracks(playlistId: string, maxTracks: number = 100): Promise<SpotifyTrack[]> {
     try {
-      const response = await this.client.get(`/playlists/${playlistId}/tracks`, {
-        params: { limit: 100 },
-      });
-
-      return response.data.items
-        .filter((item: any) => item.track !== null)
-        .map((item: any) => ({
-          id: item.track.id,
-          name: item.track.name,
-          artists: item.track.artists.map((a: any) => a.name),
-          uri: item.track.uri,
-          duration_ms: item.track.duration_ms,
-          popularity: item.track.popularity,
-        }));
+      const tracks: SpotifyTrack[] = [];
+      let offset = 0;
+      let hasNext = true;
+      while (hasNext && tracks.length < maxTracks) {
+        const response = await this.client.get(`/playlists/${playlistId}/items`, {
+          params: { limit: 50, offset },
+        });
+        const page = response.data.items
+          .map((item: any) => item.item || item.track)
+          .filter((track: any) => track?.type === 'track' || track?.uri?.startsWith('spotify:track:'))
+          .map((track: any) => ({
+            id: track.id,
+            name: track.name,
+            artists: track.artists.map((a: any) => a.name),
+            uri: track.uri,
+            duration_ms: track.duration_ms,
+            popularity: track.popularity,
+          }));
+        tracks.push(...page.slice(0, maxTracks - tracks.length));
+        offset += response.data.items.length;
+        hasNext = Boolean(response.data.next) && response.data.items.length > 0;
+      }
+      return tracks.slice(0, maxTracks);
     } catch (error: any) {
       console.error('Error fetching playlist tracks:', error.message);
-      throw new Error('Failed to fetch playlist tracks from Spotify');
-    }
-  }
-
-  async getRecommendations(params: RecommendationParams): Promise<SpotifyTrack[]> {
-    try {
-      const queryParams: any = {
-        limit: params.limit || 20,
-      };
-
-      if (params.seedTracks && params.seedTracks.length > 0) {
-        queryParams.seed_tracks = params.seedTracks.slice(0, 5).join(',');
-      }
-      if (params.seedArtists && params.seedArtists.length > 0) {
-        queryParams.seed_artists = params.seedArtists.slice(0, 5).join(',');
-      }
-      if (params.seedGenres && params.seedGenres.length > 0) {
-        queryParams.seed_genres = params.seedGenres.slice(0, 5).join(',');
-      }
-      if (params.targetEnergy !== undefined) {
-        queryParams.target_energy = params.targetEnergy;
-      }
-      if (params.targetValence !== undefined) {
-        queryParams.target_valence = params.targetValence;
-      }
-      if (params.minEnergy !== undefined) {
-        queryParams.min_energy = params.minEnergy;
-      }
-      if (params.maxEnergy !== undefined) {
-        queryParams.max_energy = params.maxEnergy;
-      }
-
-      const response = await this.client.get('/recommendations', { params: queryParams });
-
-      return response.data.tracks.map((track: any) => ({
-        id: track.id,
-        name: track.name,
-        artists: track.artists.map((a: any) => a.name),
-        uri: track.uri,
-        duration_ms: track.duration_ms,
-        popularity: track.popularity,
-      }));
-    } catch (error: any) {
-      console.error('Error fetching recommendations:', error.message);
-      throw new Error('Failed to fetch recommendations from Spotify');
-    }
-  }
-
-  async getAudioFeatures(trackIds: string[]): Promise<AudioFeatures[]> {
-    try {
-      if (trackIds.length === 0) {
-        return [];
-      }
-
-      // Spotify API allows up to 100 tracks per request
-      const chunks: string[][] = [];
-      for (let i = 0; i < trackIds.length; i += 100) {
-        chunks.push(trackIds.slice(i, i + 100));
-      }
-
-      const allFeatures: AudioFeatures[] = [];
-
-      for (const chunk of chunks) {
-        const response = await this.client.get('/audio-features', {
-          params: { ids: chunk.join(',') },
-        });
-
-        const features = response.data.audio_features
-          .filter((f: any) => f !== null)
-          .map((f: any) => ({
-            id: f.id,
-            energy: f.energy,
-            valence: f.valence,
-            danceability: f.danceability,
-            tempo: f.tempo,
-            acousticness: f.acousticness,
-          }));
-
-        allFeatures.push(...features);
-      }
-
-      return allFeatures;
-    } catch (error: any) {
-      console.error('Error fetching audio features:', error.message);
-      throw new Error('Failed to fetch audio features from Spotify');
+      throw this.apiError('Failed to fetch playlist tracks from Spotify', error);
     }
   }
 
@@ -278,7 +261,7 @@ export class SpotifyService {
         id: response.data.id,
         name: response.data.name,
         description: response.data.description || '',
-        tracks: response.data.tracks,
+        items: response.data.items,
         snapshot_id: response.data.snapshot_id,
       };
     } catch (error: any) {
@@ -289,9 +272,7 @@ export class SpotifyService {
 
   async createPlaylist(name: string, description: string, isPublic: boolean = false): Promise<SpotifyPlaylist> {
     try {
-      const userId = await this.getUserId();
-
-      const response = await this.client.post(`/users/${userId}/playlists`, {
+      const response = await this.client.post('/me/playlists', {
         name,
         description,
         public: isPublic,
@@ -301,7 +282,7 @@ export class SpotifyService {
         id: response.data.id,
         name: response.data.name,
         description: response.data.description || '',
-        tracks: response.data.tracks,
+        items: response.data.items,
         snapshot_id: response.data.snapshot_id,
       };
     } catch (error: any) {
@@ -316,7 +297,7 @@ export class SpotifyService {
       const firstBatch = trackUris.slice(0, 100);
 
       // Replace the playlist with the first batch
-      await this.client.put(`/playlists/${playlistId}/tracks`, {
+      await this.client.put(`/playlists/${playlistId}/items`, {
         uris: firstBatch,
       });
 
@@ -339,7 +320,7 @@ export class SpotifyService {
 
   async addTracksToPlaylist(playlistId: string, trackUris: string[]): Promise<void> {
     try {
-      await this.client.post(`/playlists/${playlistId}/tracks`, {
+      await this.client.post(`/playlists/${playlistId}/items`, {
         uris: trackUris,
       });
     } catch (error: any) {
@@ -354,7 +335,7 @@ export class SpotifyService {
         params: {
           q: query,
           type: 'track',
-          limit,
+          limit: Math.min(limit, 10),
         },
       });
 
@@ -372,25 +353,4 @@ export class SpotifyService {
     }
   }
 
-  async getFeaturedPlaylists(genre?: string): Promise<SpotifyPlaylist[]> {
-    try {
-      const params: any = { limit: 10 };
-      if (genre) {
-        params.locale = genre;
-      }
-
-      const response = await this.client.get('/browse/featured-playlists', { params });
-
-      return response.data.playlists.items.map((playlist: any) => ({
-        id: playlist.id,
-        name: playlist.name,
-        description: playlist.description || '',
-        tracks: playlist.tracks,
-        snapshot_id: playlist.snapshot_id,
-      }));
-    } catch (error: any) {
-      console.error('Error fetching featured playlists:', error.message);
-      return []; // Return empty array instead of throwing to gracefully handle this optional feature
-    }
-  }
 }

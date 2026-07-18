@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
-import { isEasternScheduleRange, isEasternScheduleTime } from './easternSchedule';
+import { getEasternDate, isEasternScheduleRange, isEasternScheduleTime } from './easternSchedule';
 
 describe('Eastern automation scheduling', () => {
   it.each([
@@ -32,6 +32,11 @@ describe('Eastern automation scheduling', () => {
 
   it('rejects invalid timestamps', () => {
     expect(() => isEasternScheduleTime('not-a-date', { hour: 7, minute: 0 })).toThrow('Invalid schedule timestamp');
+  });
+
+  it('uses the Eastern calendar date for durable daily state', () => {
+    expect(getEasternDate('2026-07-19T02:00:00.000Z')).toBe('2026-07-18');
+    expect(getEasternDate('2026-01-19T04:30:00.000Z')).toBe('2026-01-18');
   });
 
   it('keeps EventBridge rules on both EST and EDT candidate offsets', () => {

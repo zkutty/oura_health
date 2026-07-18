@@ -8,7 +8,7 @@ The Spotify integration creates a "Daily Health Mix" playlist that adapts to you
 - **High readiness/sleep** → Energetic, upbeat music
 - **Low readiness/sleep** → Calming, relaxing music
 - **Automatic daily updates** at 7:45 AM with smart retry logic
-- **Music from multiple sources**: Your saved tracks, playlists, Spotify recommendations, and genre playlists
+- **Music from supported sources**: Your saved tracks and your own playlists
 
 ## Prerequisites
 
@@ -25,7 +25,7 @@ The Spotify integration creates a "Daily Health Mix" playlist that adapts to you
 4. Fill in the details:
    - **App name**: "Oura Health Playlist Generator" (or any name you like)
    - **App description**: "Automatically generates playlists based on Oura Ring health data"
-   - **Redirect URI**: `http://localhost:3000/callback`
+   - **Redirect URI**: `http://127.0.0.1:9877/callback`
    - **APIs used**: Select "Web API"
 5. Agree to the terms and click "Save"
 6. You'll see your **Client ID** and **Client Secret** (click "View client secret")
@@ -35,16 +35,17 @@ The Spotify integration creates a "Daily Health Mix" playlist that adapts to you
 
 You need to obtain OAuth access and refresh tokens. Here are two methods:
 
-### Method A: Using Spotify OAuth Helper Tool (Recommended)
+### Method A: Using the local OAuth helper (Recommended)
 
-1. Use a tool like [Spotify OAuth Token Generator](https://spotify-oauth-token-generator.netlify.app/) or create your own simple OAuth flow
-2. You'll need these scopes:
+1. Add `SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET`, and `SPOTIFY_REDIRECT_URI=http://127.0.0.1:9877/callback` to `.env`.
+2. Run `npm run setup:spotify-oauth` and approve access in the browser.
+3. The helper saves access and refresh tokens directly to `.env` with these scopes:
    - `playlist-modify-private` - To update your private playlists
    - `playlist-modify-public` - To update public playlists (optional)
    - `user-library-read` - To read your saved tracks
    - `user-read-private` - To read your user profile
    - `playlist-read-private` - To read your playlists
-3. After authorization, you'll receive an **access token** and **refresh token**
+4. Return to the terminal after the browser confirms authorization.
 
 ### Method B: Manual OAuth Flow
 
@@ -55,7 +56,7 @@ If you're comfortable with OAuth, you can implement the authorization code flow:
    https://accounts.spotify.com/authorize?
    client_id=YOUR_CLIENT_ID&
    response_type=code&
-   redirect_uri=http://localhost:3000/callback&
+   redirect_uri=http://127.0.0.1:9877/callback&
    scope=playlist-modify-private playlist-modify-public user-library-read user-read-private playlist-read-private
    ```
 
@@ -69,12 +70,14 @@ If you're comfortable with OAuth, you can implement the authorization code flow:
      -H "Content-Type: application/x-www-form-urlencoded" \
      -d "grant_type=authorization_code" \
      -d "code=YOUR_AUTH_CODE" \
-     -d "redirect_uri=http://localhost:3000/callback" \
+     -d "redirect_uri=http://127.0.0.1:9877/callback" \
      -d "client_id=YOUR_CLIENT_ID" \
      -d "client_secret=YOUR_CLIENT_SECRET"
    ```
 
 5. The response will contain your `access_token` and `refresh_token`
+
+AWS deployments persist later token rotations in encrypted SSM parameters. GCP deployments can use Secret Manager by setting `SPOTIFY_TOKEN_PERSISTENCE=gcp-secret-manager` and the corresponding secret IDs. Local Express mode intentionally remains environment-only, so restart it with current tokens if Spotify rotates the refresh token.
 
 ## Step 3: Configure Environment Variables
 
@@ -157,13 +160,13 @@ curl http://localhost:3000/spotify/config
 
 The system maps your Oura scores to 5 energy levels:
 
-| Energy Level | Conditions | Music Style | Audio Features |
-|-------------|-----------|-------------|----------------|
-| **Very High** | Readiness ≥90 AND Sleep ≥90 | Rock, EDM, High-energy | Energy: 0.7-1.0, Tempo: 130-180 BPM |
-| **High** | Readiness ≥85 OR Sleep ≥85 | Dance, Electronic, Pop | Energy: 0.6-0.9, Tempo: 120-150 BPM |
-| **Moderate** | Readiness ≥75 AND Sleep ≥80 | Indie Pop, Alternative | Energy: 0.4-0.7, Tempo: 100-130 BPM |
-| **Low** | Readiness ≥70 OR Sleep ≥75 | Folk, Jazz, Lo-fi | Energy: 0.2-0.5, Tempo: 80-110 BPM |
-| **Very Low** | Readiness <70 OR Sleep <70 | Ambient, Chill, Classical | Energy: 0.0-0.3, Tempo: 60-100 BPM |
+| Energy Level | Conditions | Preferred metadata |
+|-------------|-----------|--------------------|
+| **Very High** | Readiness ≥90 AND Sleep ≥90 | Rock, EDM, intense, power |
+| **High** | Readiness ≥85 OR Sleep ≥85 | Dance, electronic, energetic, uplifting |
+| **Moderate** | Readiness ≥75 AND Sleep ≥80 | Indie pop, alternative, positive, balanced |
+| **Low** | Readiness ≥70 OR Sleep ≥75 | Folk, jazz, mellow, chill |
+| **Very Low** | Below the configured thresholds | Ambient, acoustic, calm, soothing |
 
 ### Smart Retry Logic
 
@@ -172,22 +175,19 @@ The playlist generation happens at **7:45 AM** every day, with smart retry logic
 1. **Initial attempt at 7:45 AM**: Checks if Oura data is fresh (from last night)
 2. **If data is stale**: Retries every hour from 8 AM to 1 PM (max 5 retries)
 3. **Data freshness check**: Sleep data must be from within the last 12 hours, and readiness must be from today
-4. **Success**: Playlist is updated and retries stop
+4. **Success**: Playlist is updated and durable state makes all later same-day invocations skip, including after Lambda cold starts
 5. **Failure**: Continues retrying until max retries reached
 
 ### Track Selection Process
 
-1. **Collect tracks** from all enabled sources:
+1. **Collect tracks** from supported enabled sources:
    - Your saved/liked songs (40% weight)
-   - Your existing playlists (30% weight)
-   - Spotify recommendations (20% weight)
-   - Genre-specific playlists (10% weight)
+   - Up to 10 of your most metadata-relevant playlists, with up to 100 tracks from each (30% weight)
 
-2. **Score each track** based on audio features:
-   - Energy distance from target (35% weight)
-   - Valence/happiness distance from target (30% weight)
-   - Tempo distance from target (20% weight)
-   - Acousticness distance from target (15% weight)
+2. **Score each track** without Spotify's deprecated recommendation, audio-features, or featured-playlist endpoints:
+   - Energy/genre/mood keyword matches in playlist, track, and artist metadata (75%)
+   - Configured source weight (25%)
+   - Stable track-ID ordering for ties (Spotify removed track popularity from development-mode responses)
 
 3. **Apply diversity filters**:
    - Maximum 10% of tracks from the same artist
@@ -214,20 +214,9 @@ Edit `src/config/spotifyConfig.json` to change when each energy level activates:
 }
 ```
 
-### Modify Audio Feature Targets
+### Modify Music Metadata Targets
 
-Fine-tune the music characteristics for each energy level:
-
-```json
-{
-  "audioFeatureTargets": {
-    "energy": { "min": 0.6, "max": 0.9, "target": 0.75 },
-    "valence": { "min": 0.5, "max": 0.9, "target": 0.75 },
-    "tempo": { "min": 120, "max": 150, "target": 135 },
-    "acousticness": { "min": 0.0, "max": 0.3, "target": 0.1 }
-  }
-}
-```
+Edit each energy mapping's `genres` and `moodKeywords`. These values are matched against playlist names/descriptions, track names, and artist names.
 
 ### Change Playlist Size
 
@@ -244,10 +233,8 @@ Prefer certain music sources over others:
 ```json
 {
   "sources": {
-    "savedTracks": { "enabled": true, "weight": 0.5 },      // Increase to 50%
-    "userPlaylists": { "enabled": true, "weight": 0.3 },
-    "recommendations": { "enabled": true, "weight": 0.15 },
-    "genrePlaylists": { "enabled": false, "weight": 0.05 }  // Disable this source
+    "savedTracks": { "enabled": true, "weight": 0.5 },
+    "userPlaylists": { "enabled": true, "weight": 0.3, "excludeIds": [] }
   }
 }
 ```
@@ -289,6 +276,7 @@ Prevent certain playlists from being used as source material:
 - Your refresh token may be invalid
 - Go through the OAuth flow again to get new tokens
 - Make sure your Spotify app has the correct redirect URI configured
+- In AWS, rotated access and refresh tokens are stored as encrypted SSM parameters under `/oura-health/<stage>/spotify/`; the Lambda role creates them on the first refresh
 
 ### Playlist not updating automatically
 - Check server logs for error messages

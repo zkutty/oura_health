@@ -18,8 +18,8 @@ A comprehensive health automation system that integrates your Oura Ring data wit
 ### Adaptive Music (Spotify)
 - Daily playlist generation at 7:45 AM based on your health scores
 - High readiness → energetic music, low readiness → calming music
-- Smart retry system ensures fresh overnight data
-- Pulls from your saved tracks, playlists, and Spotify recommendations
+- Durable retry state ensures fresh overnight data without duplicate regeneration after a cold start
+- Pulls from your saved tracks and your own playlists, then ranks by energy/mood metadata and configured source weight
 
 ### Smart Lighting (Govee)
 - Automatic morning lighting based on health scores (7 AM)
@@ -131,7 +131,7 @@ the extra offset invocation exits without running automation.
 ### Playlist Generation (7:45 AM)
 1. Checks if Oura data is fresh (from last night)
 2. Generates Spotify playlist matching your energy level
-3. Pulls tracks from your library, playlists, and recommendations
+3. Pulls tracks from your saved library and playlists; unavailable sources degrade independently
 4. Optionally syncs lighting to match playlist mood
 
 ### Throughout the Day
@@ -228,7 +228,7 @@ curl http://localhost:3000/health-summary
 All features are highly customizable through configuration files:
 
 - **Adjust energy thresholds** - Change when each level activates
-- **Modify music preferences** - Add genres, adjust audio feature targets
+- **Modify music preferences** - Adjust source weights, genres, and mood keywords
 - **Custom lighting scenes** - Create your own scene definitions
 - **Automation schedule** - Change timing of automated tasks
 - **Smart home actions** - Add conditional automations
@@ -277,7 +277,7 @@ oura_health/
 - **Web Framework**: Express
 - **Scheduling**: node-cron
 - **APIs**: Oura v2, Spotify Web API, Govee API, Alexa Skills Kit
-- **HTTP Client**: axios with interceptors for token refresh
+- **HTTP Client**: axios with interceptors for token refresh; rotated tokens persist in Google Secret Manager or encrypted AWS SSM parameters
 
 ## License
 

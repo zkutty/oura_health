@@ -22,10 +22,14 @@ import { GoveeService } from '../services/goveeService';
 import { AlexaRoutineService } from '../services/alexaRoutineService';
 import { LightingService } from '../services/lightingService';
 import { DataFreshnessChecker } from '../utils/dataFreshnessChecker';
-import { isEasternScheduleRange, isEasternScheduleTime } from '../utils/easternSchedule';
+import { getEasternDate, isEasternScheduleRange, isEasternScheduleTime } from '../utils/easternSchedule';
 import { EnergyLevel } from '../services/playlistService';
 import { OuraExportService } from '../services/ouraExportService';
 import { GoogleDocsOuraPublisher } from '../services/googleDocsOuraPublisher';
+import {
+  DynamoDbPlaylistGenerationStateStore,
+  PlaylistGenerationGuard,
+} from '../services/playlistGenerationStateStore';
 import {
   createOuraWebhookReplayKey,
   parseOuraWebhookEvent,
@@ -47,6 +51,7 @@ let ouraExportService: OuraExportService | null = null;
 let googleDocsOuraPublisher: GoogleDocsOuraPublisher | null = null;
 const sqs = new SQSClient({});
 const dynamoDb = new DynamoDBClient({});
+let playlistGenerationGuard: PlaylistGenerationGuard | undefined;
 const REQUIRED_EXPORT_SECTIONS = ['sleep', 'readiness'] as const;
 const WEBHOOK_MAX_RETRIES = 5;
 const RECONCILIATION_LOOKBACK_DAYS = 7;
@@ -115,6 +120,18 @@ function initializeServices() {
   } catch (error) {
     console.error('Failed to load Spotify configuration:', error);
   }
+}
+
+function getPlaylistGenerationGuard(): PlaylistGenerationGuard {
+  if (!playlistGenerationGuard) {
+    const tableName = process.env.PLAYLIST_GENERATION_STATE_TABLE;
+    if (!tableName) throw new Error('PLAYLIST_GENERATION_STATE_TABLE is not configured');
+    playlistGenerationGuard = new PlaylistGenerationGuard(
+      new DynamoDbPlaylistGenerationStateStore(tableName, dynamoDb),
+      5
+    );
+  }
+  return playlistGenerationGuard;
 }
 
 /**
@@ -425,11 +442,17 @@ export const scheduledMorningAutomation = async (
 /**
  * Lambda handler for scheduled playlist generation (7:45 AM with retries)
  */
-let playlistRetryCount = 0;
 const MAX_PLAYLIST_RETRIES = 5;
 
-async function attemptPlaylistGeneration() {
+async function attemptPlaylistGeneration(date: string) {
   initializeServices();
+  const generationGuard = getPlaylistGenerationGuard();
+
+  if (!await generationGuard.shouldAttempt(date)) {
+    console.log(`Skipping playlist generation for ${date}; it already succeeded or reached ${MAX_PLAYLIST_RETRIES} attempts.`);
+    return;
+  }
+  await generationGuard.recordAttempt(date);
 
   if (!ouraService || !playlistService || !lightingService || !ouraExportService || !googleDocsOuraPublisher) {
     throw new Error('Services not initialized');
@@ -443,7 +466,6 @@ async function attemptPlaylistGeneration() {
     if (!DataFreshnessChecker.isDataFreshForPlaylist(summary)) {
       const status = DataFreshnessChecker.getDataFreshnessStatus(summary);
       console.log(`Oura data is not fresh yet: ${status}. Will retry.`);
-      playlistRetryCount++;
       return;
     }
 
@@ -477,15 +499,12 @@ async function attemptPlaylistGeneration() {
         }
       }
 
-      // Reset retry counter on success
-      playlistRetryCount = MAX_PLAYLIST_RETRIES;
+      await generationGuard.markGenerated(date);
     } else {
       console.log(`✗ Playlist generation failed: ${result.message}`);
-      playlistRetryCount++;
     }
   } catch (error: any) {
     console.error('Error in playlist generation:', error.message);
-    playlistRetryCount++;
     throw error;
   }
 }
@@ -500,8 +519,7 @@ export const scheduledPlaylistGeneration = async (
   }
 
   console.log('Running scheduled playlist generation (7:45 AM)...');
-  playlistRetryCount = 0; // Reset retry counter
-  await attemptPlaylistGeneration();
+  await attemptPlaylistGeneration(getEasternDate(event.time));
 };
 
 /**
@@ -516,12 +534,14 @@ export const scheduledPlaylistRetry = async (
     return;
   }
 
-  if (playlistRetryCount < MAX_PLAYLIST_RETRIES) {
-    console.log(`Retry attempt ${playlistRetryCount + 1}/${MAX_PLAYLIST_RETRIES} for playlist generation...`);
-    await attemptPlaylistGeneration();
-  } else {
-    console.log('Max playlist generation retries reached for today.');
+  const date = getEasternDate(event.time);
+  const generationGuard = getPlaylistGenerationGuard();
+  if (!await generationGuard.shouldAttempt(date)) {
+    console.log(`Skipping playlist retry for ${date}; generation already succeeded or max attempts were reached.`);
+    return;
   }
+  console.log(`Running durable playlist retry for ${date}...`);
+  await attemptPlaylistGeneration(date);
 };
 
 /**

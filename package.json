@@ -12,6 +12,7 @@
     "test:watch": "vitest",
     "test-api": "ts-node scripts/test-api.ts",
     "setup-spotify": "ts-node scripts/setup-spotify-playlist.ts",
+    "setup:spotify-oauth": "ts-node src/scripts/setup-spotify-oauth.ts",
     "setup-sheets": "ts-node scripts/setup-google-sheets.ts",
     "backfill-sheets": "ts-node scripts/backfill-sheets.ts",
     "sync-sheets": "ts-node scripts/sync-sheets.ts",
@@ -38,6 +39,7 @@
   "dependencies": {
     "@aws-sdk/client-dynamodb": "^3.1088.0",
     "@aws-sdk/client-sqs": "^3.1088.0",
+    "@aws-sdk/client-ssm": "^3.1090.0",
     "@google-cloud/firestore": "^8.6.0",
     "@google-cloud/secret-manager": "^6.2.0",
     "@google-cloud/tasks": "^6.2.3",

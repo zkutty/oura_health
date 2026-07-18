@@ -1,4 +1,4 @@
-import { SpotifyService, SpotifyTrack, AudioFeatures } from './spotifyService';
+import { SpotifyApiError, SpotifyService, SpotifyTrack } from './spotifyService';
 import { OuraDailySummary } from './ouraService';
 
 export type EnergyLevel = 'very_low' | 'low' | 'moderate' | 'high' | 'very_high';
@@ -29,9 +29,13 @@ export interface PlaylistConfig {
   energyMappings: EnergyMapping[];
   sources: {
     savedTracks: { enabled: boolean; weight: number };
-    userPlaylists: { enabled: boolean; weight: number; excludeIds: string[] };
-    recommendations: { enabled: boolean; weight: number };
-    genrePlaylists: { enabled: boolean; weight: number };
+    userPlaylists: {
+      enabled: boolean;
+      weight: number;
+      excludeIds: string[];
+      maxPlaylists?: number;
+      maxTracksPerPlaylist?: number;
+    };
   };
   schedule: {
     initialTime: string;
@@ -44,7 +48,7 @@ export interface PlaylistConfig {
 export interface ScoredTrack {
   track: SpotifyTrack;
   score: number;
-  audioFeatures: AudioFeatures;
+  selectionSignals: string[];
 }
 
 export interface PlaylistGenerationResult {
@@ -241,23 +245,30 @@ export class PlaylistService {
       return [];
     }
 
-    const allTracks: SpotifyTrack[] = [];
-    const trackIds = new Set<string>();
+    const tracksById = new Map<string, SpotifyTrack>();
+    const addTrack = (track: SpotifyTrack, sourceTags: string[], sourceWeight: number) => {
+      const existing = tracksById.get(track.id);
+      if (existing) {
+        existing.sourceTags = [...new Set([...(existing.sourceTags || []), ...sourceTags])];
+        existing.sourceWeight = Math.max(existing.sourceWeight || 0, sourceWeight);
+        return;
+      }
+      tracksById.set(track.id, { ...track, sourceTags, sourceWeight });
+    };
 
     // 1. Collect from saved/liked tracks
     if (this.config.sources.savedTracks.enabled) {
       try {
         console.log('Collecting saved tracks...');
         const savedTracks = await this.spotifyService.getUserSavedTracks(500, 0);
-        savedTracks.forEach(track => {
-          if (!trackIds.has(track.id)) {
-            allTracks.push(track);
-            trackIds.add(track.id);
-          }
-        });
+        savedTracks.forEach(track => addTrack(
+          track,
+          ['saved', 'liked', 'favorites'],
+          this.config!.sources.savedTracks.weight
+        ));
         console.log(`Added ${savedTracks.length} saved tracks`);
       } catch (error: any) {
-        console.error('Error fetching saved tracks:', error.message);
+        this.logSourceDegradation('saved_tracks', error);
       }
     }
 
@@ -270,92 +281,53 @@ export class PlaylistService {
           ...this.config.sources.userPlaylists.excludeIds,
           this.config.targetPlaylistId, // Always exclude target playlist
         ];
+        const mapping = this.getEnergyMappingForLevel(this.currentEnergyLevel);
+        const desiredTerms = [...mapping.genres, ...mapping.moodKeywords]
+          .map(value => value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim());
+        const maxPlaylists = this.config.sources.userPlaylists.maxPlaylists ?? 10;
+        const maxTracksPerPlaylist = this.config.sources.userPlaylists.maxTracksPerPlaylist ?? 100;
+        const sourcePlaylists = playlists
+          .filter(playlist => !excludeIds.includes(playlist.id))
+          .sort((left, right) => {
+            const relevance = (playlist: typeof left) => {
+              const metadata = `${playlist.name} ${playlist.description}`
+                .toLowerCase()
+                .replace(/[^a-z0-9]+/g, ' ');
+              return desiredTerms.filter(term => metadata.includes(term)).length;
+            };
+            return relevance(right) - relevance(left) || left.name.localeCompare(right.name);
+          })
+          .slice(0, maxPlaylists);
 
-        for (const playlist of playlists) {
-          if (!excludeIds.includes(playlist.id)) {
-            try {
-              const tracks = await this.spotifyService.getPlaylistTracks(playlist.id);
-              tracks.forEach(track => {
-                if (!trackIds.has(track.id)) {
-                  allTracks.push(track);
-                  trackIds.add(track.id);
-                }
-              });
-            } catch (error: any) {
-              console.error(`Error fetching tracks from playlist ${playlist.name}:`, error.message);
-            }
-          }
-        }
-        console.log(`Total tracks after playlists: ${allTracks.length}`);
-      } catch (error: any) {
-        console.error('Error fetching user playlists:', error.message);
-      }
-    }
-
-    // 3. Get recommendations based on existing tracks
-    if (this.config.sources.recommendations.enabled && allTracks.length > 0) {
-      try {
-        console.log('Getting recommendations...');
-        const energyMapping = this.getEnergyMappingForLevel(this.currentEnergyLevel);
-        const topTracks = allTracks
-          .sort((a, b) => b.popularity - a.popularity)
-          .slice(0, 5)
-          .map(t => t.id);
-
-        const recommendations = await this.spotifyService.getRecommendations({
-          seedTracks: topTracks,
-          seedGenres: energyMapping.genres.slice(0, 2),
-          targetEnergy: energyMapping.audioFeatureTargets.energy.target,
-          targetValence: energyMapping.audioFeatureTargets.valence.target,
-          limit: 50,
-        });
-
-        recommendations.forEach(track => {
-          if (!trackIds.has(track.id)) {
-            allTracks.push(track);
-            trackIds.add(track.id);
-          }
-        });
-        console.log(`Added ${recommendations.length} recommended tracks`);
-      } catch (error: any) {
-        console.error('Error fetching recommendations:', error.message);
-      }
-    }
-
-    // 4. Get tracks from genre-specific featured playlists
-    if (this.config.sources.genrePlaylists.enabled) {
-      try {
-        console.log('Getting tracks from featured playlists...');
-        const energyMapping = this.getEnergyMappingForLevel(this.currentEnergyLevel);
-
-        // Get featured playlists (general)
-        const featuredPlaylists = await this.spotifyService.getFeaturedPlaylists();
-
-        for (const playlist of featuredPlaylists.slice(0, 3)) {
+        for (const playlist of sourcePlaylists) {
           try {
-            const tracks = await this.spotifyService.getPlaylistTracks(playlist.id);
-            tracks.slice(0, 10).forEach(track => {
-              if (!trackIds.has(track.id)) {
-                allTracks.push(track);
-                trackIds.add(track.id);
-              }
-            });
+              const tracks = await this.spotifyService.getPlaylistTracks(playlist.id, maxTracksPerPlaylist);
+              const playlistTags = `${playlist.name} ${playlist.description}`
+                .toLowerCase()
+                .split(/[^a-z0-9]+/)
+                .filter(Boolean);
+              tracks.forEach(track => addTrack(
+                track,
+                ['playlist', ...playlistTags],
+                this.config!.sources.userPlaylists.weight
+              ));
           } catch (error: any) {
-            console.error(`Error fetching tracks from featured playlist:`, error.message);
+            this.logSourceDegradation(`playlist:${playlist.id}`, error);
           }
         }
-
-        console.log(`Total tracks after featured playlists: ${allTracks.length}`);
+        console.log(`Total tracks after playlists: ${tracksById.size}`);
       } catch (error: any) {
-        console.error('Error fetching featured playlists:', error.message);
+        this.logSourceDegradation('user_playlists', error);
       }
     }
 
-    return allTracks;
+    return [...tracksById.values()];
   }
 
   /**
-   * Score and filter tracks based on audio features
+   * Score tracks using endpoints still available to Spotify development-mode apps.
+   * Playlist names/descriptions supply energy and mood hints; source weighting
+   * and a deterministic ID tie-break provide stable fallbacks.
    */
   private async filterAndScoreTracks(tracks: SpotifyTrack[], energyLevel: EnergyLevel): Promise<ScoredTrack[]> {
     if (!this.config) {
@@ -363,60 +335,24 @@ export class PlaylistService {
     }
 
     const energyMapping = this.getEnergyMappingForLevel(energyLevel);
-    const targets = energyMapping.audioFeatureTargets;
+    const normalize = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    const desiredKeywords = [...energyMapping.genres, ...energyMapping.moodKeywords]
+      .map(normalize);
 
-    // Get audio features for all tracks (in batches of 100)
-    console.log('Fetching audio features for tracks...');
-    const trackIds = tracks.map(t => t.id);
-    const audioFeatures = await this.spotifyService.getAudioFeatures(trackIds);
+    return tracks.map(track => {
+      const searchable = normalize([track.name, ...track.artists, ...(track.sourceTags || [])].join(' '));
+      const selectionSignals = desiredKeywords.filter(keyword => searchable.includes(keyword));
+      const metadataScore = Math.min(1, selectionSignals.length / 3);
+      const sourceScore = Math.min(1, Math.max(0, track.sourceWeight ?? 0));
+      const score = (metadataScore * 0.75) + (sourceScore * 0.25);
+      return { track, score, selectionSignals };
+    }).sort((left, right) => right.score - left.score || left.track.id.localeCompare(right.track.id));
+  }
 
-    // Create a map for quick lookup
-    const featuresMap = new Map(audioFeatures.map(f => [f.id, f]));
-
-    const scoredTracks: ScoredTrack[] = [];
-    const weights = { energy: 0.35, valence: 0.30, tempo: 0.20, acousticness: 0.15 };
-
-    for (const track of tracks) {
-      const features = featuresMap.get(track.id);
-      if (!features) continue;
-
-      // Apply hard filters (min/max ranges)
-      if (features.energy < targets.energy.min || features.energy > targets.energy.max) {
-        continue;
-      }
-      if (features.valence < targets.valence.min || features.valence > targets.valence.max) {
-        continue;
-      }
-
-      // Calculate composite score based on distance from target
-      let score = 0;
-
-      // Energy score (closer to target is better)
-      const energyDistance = Math.abs(features.energy - targets.energy.target);
-      score += (1 - energyDistance) * weights.energy;
-
-      // Valence score
-      const valenceDistance = Math.abs(features.valence - targets.valence.target);
-      score += (1 - valenceDistance) * weights.valence;
-
-      // Tempo score (normalized)
-      const tempoNormalized = Math.min(1, Math.max(0,
-        (features.tempo - targets.tempo.min) / (targets.tempo.max - targets.tempo.min)
-      ));
-      const tempoTarget = (targets.tempo.target - targets.tempo.min) /
-                         (targets.tempo.max - targets.tempo.min);
-      const tempoDistance = Math.abs(tempoNormalized - tempoTarget);
-      score += (1 - tempoDistance) * weights.tempo;
-
-      // Acousticness score
-      const acousticnessDistance = Math.abs(features.acousticness - targets.acousticness.target);
-      score += (1 - acousticnessDistance) * weights.acousticness;
-
-      scoredTracks.push({ track, score, audioFeatures: features });
-    }
-
-    // Sort by score descending
-    return scoredTracks.sort((a, b) => b.score - a.score);
+  private logSourceDegradation(source: string, error: any): void {
+    const status = error instanceof SpotifyApiError ? error.status : error?.status;
+    const event = status === 403 ? 'spotify_source_degraded' : 'spotify_source_failed';
+    console.warn(JSON.stringify({ event, source, status, message: error?.message || 'Unknown Spotify error' }));
   }
 
   /**

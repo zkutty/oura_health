@@ -1,5 +1,5 @@
 import axios, { AxiosInstance } from 'axios';
-import { SecretManagerServiceClient } from '@google-cloud/secret-manager';
+import { createOAuthTokenStore, OAuthTokenStore } from './oauthTokenStore';
 
 export interface OuraSleepData {
   day: string;
@@ -104,12 +104,15 @@ export class OuraService {
   private clientId: string;
   private clientSecret: string;
   private refreshPromise?: Promise<void>;
+  private tokenLoadPromise?: Promise<void>;
+  private readonly tokenStore?: OAuthTokenStore;
 
-  constructor() {
+  constructor(tokenStore: OAuthTokenStore | undefined = createOAuthTokenStore('OURA')) {
     this.accessToken = process.env.OURA_ACCESS_TOKEN || '';
     this.refreshToken = process.env.OURA_REFRESH_TOKEN || '';
     this.clientId = process.env.OURA_CLIENT_ID || '';
     this.clientSecret = process.env.OURA_CLIENT_SECRET || '';
+    this.tokenStore = tokenStore;
 
     this.client = axios.create({
       baseURL: 'https://api.ouraring.com/v2',
@@ -117,6 +120,12 @@ export class OuraService {
         'Authorization': `Bearer ${this.accessToken}`,
         'Content-Type': 'application/json',
       },
+    });
+
+    this.client.interceptors.request.use(async (config) => {
+      await this.ensureTokensLoaded();
+      config.headers.Authorization = `Bearer ${this.accessToken}`;
+      return config;
     });
 
     // Add response interceptor to handle token refresh
@@ -140,6 +149,21 @@ export class OuraService {
     );
   }
 
+  private ensureTokensLoaded(): Promise<void> {
+    if (!this.tokenStore) return Promise.resolve();
+    if (!this.tokenLoadPromise) {
+      this.tokenLoadPromise = this.tokenStore.load().then((tokens) => {
+        if (!tokens) return;
+        this.accessToken = tokens.accessToken;
+        this.refreshToken = tokens.refreshToken;
+        this.client.defaults.headers.Authorization = `Bearer ${this.accessToken}`;
+      }).catch((error: any) => {
+        throw new Error(`Failed to load persisted Oura OAuth tokens: ${error.message}`);
+      });
+    }
+    return this.tokenLoadPromise;
+  }
+
   private refreshAccessTokenOnce(): Promise<void> {
     if (!this.refreshPromise) {
       this.refreshPromise = this.refreshAccessToken().finally(() => {
@@ -150,6 +174,7 @@ export class OuraService {
   }
 
   private async refreshAccessToken(): Promise<void> {
+    let response;
     try {
       const body = new URLSearchParams({
         grant_type: 'refresh_token',
@@ -157,43 +182,29 @@ export class OuraService {
         client_id: this.clientId,
         client_secret: this.clientSecret,
       });
-      const response = await axios.post(
+      response = await axios.post(
         'https://api.ouraring.com/oauth/token',
         body.toString(),
         { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
       );
 
-      this.accessToken = response.data.access_token;
-      if (response.data.refresh_token) {
-        this.refreshToken = response.data.refresh_token;
-      }
-
-      // Update the default authorization header
-      this.client.defaults.headers.Authorization = `Bearer ${this.accessToken}`;
-      await this.persistRefreshedTokens();
     } catch (error) {
       throw new Error('Failed to refresh Oura access token');
     }
-  }
 
-  private async persistRefreshedTokens(): Promise<void> {
-    if (process.env.OURA_TOKEN_PERSISTENCE !== 'gcp-secret-manager') return;
-    const projectId = process.env.GCP_PROJECT_ID;
-    const accessSecretId = process.env.OURA_ACCESS_TOKEN_SECRET_ID;
-    const refreshSecretId = process.env.OURA_REFRESH_TOKEN_SECRET_ID;
-    if (!projectId || !accessSecretId || !refreshSecretId) return;
+    this.accessToken = response.data.access_token;
+    if (response.data.refresh_token) {
+      this.refreshToken = response.data.refresh_token;
+    }
+    this.client.defaults.headers.Authorization = `Bearer ${this.accessToken}`;
 
-    const client = new SecretManagerServiceClient();
-    await Promise.all([
-      client.addSecretVersion({
-        parent: `projects/${projectId}/secrets/${accessSecretId}`,
-        payload: { data: Buffer.from(this.accessToken, 'utf8') },
-      }),
-      client.addSecretVersion({
-        parent: `projects/${projectId}/secrets/${refreshSecretId}`,
-        payload: { data: Buffer.from(this.refreshToken, 'utf8') },
-      }),
-    ]);
+    if (this.tokenStore) {
+      try {
+        await this.tokenStore.save({ accessToken: this.accessToken, refreshToken: this.refreshToken });
+      } catch (error: any) {
+        throw new Error(`Failed to persist refreshed Oura OAuth tokens: ${error.message}`);
+      }
+    }
   }
 
   async getSleepData(startDate?: string, endDate?: string): Promise<OuraSleepData[]> {
