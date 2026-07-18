@@ -104,6 +104,11 @@ and post-deployment Oura subscription step.
 - **Voice Control**: Custom Alexa skill with multiple intents
 - **Automation**: node-cron for scheduled tasks (7 AM, 7:45 AM, 9 PM)
 
+AWS deployments execute those times in `America/New_York`. EventBridge rules
+cover both the EST and EDT UTC offsets, and each Lambda validates the local time
+before doing work. This keeps the schedule stable across daylight-saving changes;
+the extra offset invocation exits without running automation.
+
 ## Documentation
 
 ### Setup Guides

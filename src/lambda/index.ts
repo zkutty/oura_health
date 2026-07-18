@@ -22,6 +22,7 @@ import { GoveeService } from '../services/goveeService';
 import { AlexaRoutineService } from '../services/alexaRoutineService';
 import { LightingService } from '../services/lightingService';
 import { DataFreshnessChecker } from '../utils/dataFreshnessChecker';
+import { isEasternScheduleRange, isEasternScheduleTime } from '../utils/easternSchedule';
 import { EnergyLevel } from '../services/playlistService';
 import { OuraExportService } from '../services/ouraExportService';
 import { GoogleDocsOuraPublisher } from '../services/googleDocsOuraPublisher';
@@ -371,6 +372,11 @@ export const scheduledMorningAutomation = async (
   event: ScheduledEvent,
   context: Context
 ): Promise<void> => {
+  if (!isEasternScheduleTime(event.time, { hour: 7, minute: 0 })) {
+    console.log(`Skipping morning automation outside 7:00 AM America/New_York (${event.time}).`);
+    return;
+  }
+
   initializeServices();
 
   console.log('Running scheduled morning automation (7 AM)...');
@@ -488,6 +494,11 @@ export const scheduledPlaylistGeneration = async (
   event: ScheduledEvent,
   context: Context
 ): Promise<void> => {
+  if (!isEasternScheduleTime(event.time, { hour: 7, minute: 45 })) {
+    console.log(`Skipping playlist generation outside 7:45 AM America/New_York (${event.time}).`);
+    return;
+  }
+
   console.log('Running scheduled playlist generation (7:45 AM)...');
   playlistRetryCount = 0; // Reset retry counter
   await attemptPlaylistGeneration();
@@ -500,6 +511,11 @@ export const scheduledPlaylistRetry = async (
   event: ScheduledEvent,
   context: Context
 ): Promise<void> => {
+  if (!isEasternScheduleRange(event.time, { startHour: 8, endHour: 13, minute: 0 })) {
+    console.log(`Skipping playlist retry outside 8:00 AM-1:00 PM America/New_York (${event.time}).`);
+    return;
+  }
+
   if (playlistRetryCount < MAX_PLAYLIST_RETRIES) {
     console.log(`Retry attempt ${playlistRetryCount + 1}/${MAX_PLAYLIST_RETRIES} for playlist generation...`);
     await attemptPlaylistGeneration();
@@ -515,6 +531,11 @@ export const scheduledEveningWindDown = async (
   event: ScheduledEvent,
   context: Context
 ): Promise<void> => {
+  if (!isEasternScheduleTime(event.time, { hour: 21, minute: 0 })) {
+    console.log(`Skipping evening wind-down outside 9:00 PM America/New_York (${event.time}).`);
+    return;
+  }
+
   initializeServices();
 
   console.log('Running scheduled evening wind-down (9 PM)...');

@@ -123,39 +123,41 @@ functions:
           enabled: true
           description: Reconcile recent Oura daily exports
 
-  # Morning automation - runs at 7:00 AM daily
+  # EventBridge cron is UTC. Each automation uses both Eastern UTC offsets and
+  # the handler filters the extra invocation in America/New_York for DST safety.
+  # Morning automation - executes at 7:00 AM Eastern daily
   morningAutomation:
     handler: dist/lambda/index.scheduledMorningAutomation
     events:
       - schedule:
-          rate: cron(0 7 * * ? *)
+          rate: cron(0 11,12 * * ? *)
           enabled: true
           description: Morning automation based on Oura scores
 
-  # Playlist generation - runs at 7:45 AM daily
+  # Playlist generation - executes at 7:45 AM Eastern daily
   playlistGeneration:
     handler: dist/lambda/index.scheduledPlaylistGeneration
     events:
       - schedule:
-          rate: cron(45 7 * * ? *)
+          rate: cron(45 11,12 * * ? *)
           enabled: true
           description: Generate daily Spotify playlist
 
-  # Playlist retry - runs hourly from 8 AM to 1 PM
+  # Playlist retry - executes hourly from 8 AM to 1 PM Eastern
   playlistRetry:
     handler: dist/lambda/index.scheduledPlaylistRetry
     events:
       - schedule:
-          rate: cron(0 8-13 * * ? *)
+          rate: cron(0 12-18 * * ? *)
           enabled: true
           description: Retry playlist generation if data not fresh
 
-  # Evening wind-down - runs at 9:00 PM daily
+  # Evening wind-down - executes at 9:00 PM Eastern daily
   eveningWindDown:
     handler: dist/lambda/index.scheduledEveningWindDown
     events:
       - schedule:
-          rate: cron(0 21 * * ? *)
+          rate: cron(0 1,2 * * ? *)
           enabled: true
           description: Evening wind-down lighting
 
