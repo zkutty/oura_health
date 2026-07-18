@@ -1,14 +1,15 @@
 # Google Cloud deployment
 
-The Oura export pipeline runs as two Cloud Run services:
+The production runtime uses two Cloud Run services:
 
-- `oura-health-webhook` is public and exposes only Oura's verified GET/POST
-  webhook route.
+- `oura-health-webhook` is public and exposes Oura's verified webhook route and
+  the Alexa skill endpoint.
 - `oura-health-worker` is private. Cloud Tasks invokes it for webhook work and
-  Cloud Scheduler invokes it once daily for reconciliation.
+  playlist generation; Cloud Scheduler invokes reconciliation and a playlist fallback.
 
-Firestore stores webhook replay keys and per-day export state. Secret Manager
-stores Oura credentials. The worker uses its attached Google service account
+Firestore stores webhook replay keys, per-day export state, and transactional
+playlist generation state. Secret Manager stores Oura and Spotify credentials.
+The worker uses its attached Google service account
 to update the target Google Doc, so no private-key JSON is deployed.
 
 ## Prerequisites
@@ -30,7 +31,7 @@ to update the target Google Doc, so no private-key JSON is deployed.
    GCP_FIRESTORE_LOCATION=us-east1
    ```
 
-   The existing Oura and Google Doc variables must also be present. The Google
+   The existing Oura, Spotify, and Google Doc variables must also be present. The Google
    service-account private key remains useful for local exports, but it is not
    deployed to Cloud Run.
 
@@ -54,7 +55,13 @@ to update the target Google Doc, so no private-key JSON is deployed.
 
 ## Deploy
 
-Run:
+Before the first production cutover, disable any legacy AWS schedules and add:
+
+```env
+GCP_ENABLE_AUTOMATION_CUTOVER=true
+```
+
+Then run:
 
 ```bash
 npm run deploy:gcp
@@ -62,7 +69,7 @@ npm run deploy:gcp
 
 The script enables the required APIs, creates the runtime service account,
 Firestore database, Artifact Registry repository, Cloud Tasks queue, secrets,
-two Cloud Run services, and the daily Cloud Scheduler job. It builds one image
+two Cloud Run services, and Cloud Scheduler jobs. It builds one image
 and uses it for both services.
 
 At the end, the script prints:
@@ -79,11 +86,19 @@ At the end, the script prints:
 The subscription command is idempotent and creates missing update subscriptions
 for sleep, readiness, activity, and resilience.
 
+3. The public Alexa HTTPS endpoint. Select HTTPS in the Alexa developer console
+   and use the printed `/alexa` URL.
+
 ## Operations
 
 Cloud Scheduler runs reconciliation at 11:15 AM America/New_York and checks the
 previous seven days. Complete days are skipped; missing, partial, and failed
 days are fetched again.
+
+The normal playlist path is event driven. When a completed export is produced,
+Cloud Tasks queues a separate playlist job. Firestore prevents concurrent or
+duplicate generation for the same date and input fingerprint. A scheduler at
+8:15 AM America/New_York queues a fallback using the same idempotent path.
 
 To re-export one day manually through the private worker:
 
@@ -93,6 +108,17 @@ curl -X POST \
   -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
   "${WORKER_URL}/admin/reexport?date=YYYY-MM-DD"
 ```
+
+To force playlist regeneration for one day:
+
+```bash
+curl -X POST \
+  -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
+  "${WORKER_URL}/admin/regenerate-playlist?date=YYYY-MM-DD"
+```
+
+See [GCP migration runbook](gcp-migration-runbook.md) for cutover, validation,
+rollback, and legacy AWS teardown.
 
 To inspect logs:
 

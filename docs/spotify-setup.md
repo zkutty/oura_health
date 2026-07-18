@@ -77,7 +77,9 @@ If you're comfortable with OAuth, you can implement the authorization code flow:
 
 5. The response will contain your `access_token` and `refresh_token`
 
-AWS deployments persist later token rotations in encrypted SSM parameters. GCP deployments can use Secret Manager by setting `SPOTIFY_TOKEN_PERSISTENCE=gcp-secret-manager` and the corresponding secret IDs. Local Express mode intentionally remains environment-only, so restart it with current tokens if Spotify rotates the refresh token.
+GCP deployments persist later token rotations in Secret Manager. Local Express
+mode intentionally remains environment-only, so restart it with current tokens
+if Spotify rotates the refresh token.
 
 ## Step 3: Configure Environment Variables
 
@@ -168,30 +170,29 @@ The system maps your Oura scores to 5 energy levels:
 | **Low** | Readiness ≥70 OR Sleep ≥75 | Folk, jazz, mellow, chill |
 | **Very Low** | Below the configured thresholds | Ambient, acoustic, calm, soothing |
 
-### Smart Retry Logic
+### Event-driven generation and retry
 
-The playlist generation happens at **7:45 AM** every day, with smart retry logic:
-
-1. **Initial attempt at 7:45 AM**: Checks if Oura data is fresh (from last night)
-2. **If data is stale**: Retries every hour from 8 AM to 1 PM (max 5 retries)
-3. **Data freshness check**: Sleep data must be from within the last 12 hours, and readiness must be from today
-4. **Success**: Playlist is updated and durable state makes all later same-day invocations skip, including after Lambda cold starts
-5. **Failure**: Continues retrying until max retries reached
+Oura webhook processing queues playlist generation as soon as both sleep and
+readiness are available. Cloud Tasks retries transient failures, Firestore
+prevents concurrent or duplicate same-day writes, and an 8:15 AM Eastern Cloud
+Scheduler fallback queues the same idempotent path.
 
 ### Track Selection Process
 
 1. **Collect tracks** from supported enabled sources:
    - Your saved/liked songs (40% weight)
    - Up to 10 of your most metadata-relevant playlists, with up to 100 tracks from each (30% weight)
+   - Up to four Spotify searches with up to 10 tracks each for discoveries
 
 2. **Score each track** without Spotify's deprecated recommendation, audio-features, or featured-playlist endpoints:
    - Energy/genre/mood keyword matches in playlist, track, and artist metadata (75%)
    - Configured source weight (25%)
    - Stable track-ID ordering for ties (Spotify removed track popularity from development-mode responses)
 
-3. **Apply diversity filters**:
-   - Maximum 10% of tracks from the same artist
-   - Ensures varied listening experience
+3. **Build a hybrid mix**:
+   - Approximately 70% library tracks and 30% search discoveries
+   - Maximum three tracks per artist
+   - All scoring remains local; Spotify data is never sent to an AI service
 
 4. **Select top 30 tracks** with highest scores
 
@@ -276,11 +277,11 @@ Prevent certain playlists from being used as source material:
 - Your refresh token may be invalid
 - Go through the OAuth flow again to get new tokens
 - Make sure your Spotify app has the correct redirect URI configured
-- In AWS, rotated access and refresh tokens are stored as encrypted SSM parameters under `/oura-health/<stage>/spotify/`; the Lambda role creates them on the first refresh
+- In GCP, rotated access and refresh tokens are stored as new Secret Manager versions
 
 ### Playlist not updating automatically
 - Check server logs for error messages
-- Verify the cron job is running: look for "Running scheduled playlist generation" in logs
+- Inspect the Cloud Task and `playlistGenerationState` Firestore document
 - Ensure your Oura data is syncing properly
 - Test data freshness: `curl http://localhost:3000/spotify/data-freshness`
 

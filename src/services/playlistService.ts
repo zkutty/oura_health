@@ -36,6 +36,13 @@ export interface PlaylistConfig {
       maxPlaylists?: number;
       maxTracksPerPlaylist?: number;
     };
+    search?: {
+      enabled: boolean;
+      weight: number;
+      maxQueries: number;
+      maxTracksPerQuery: number;
+      discoveryRatio: number;
+    };
   };
   schedule: {
     initialTime: string;
@@ -43,6 +50,13 @@ export interface PlaylistConfig {
     maxRetries: number;
     timeoutHours: number;
   };
+}
+
+export interface DailyMusicBrief {
+  energyLevel: EnergyLevel;
+  title: string;
+  description: string;
+  searchQueries: string[];
 }
 
 export interface ScoredTrack {
@@ -63,6 +77,7 @@ export interface PlaylistGenerationResult {
     activity?: number;
   };
   message?: string;
+  musicBrief?: DailyMusicBrief;
 }
 
 export class PlaylistService {
@@ -116,9 +131,11 @@ export class PlaylistService {
       // Step 1: Determine energy level
       this.currentEnergyLevel = this.determineEnergyLevel(ouraData);
       console.log(`Energy level determined: ${this.currentEnergyLevel}`);
+      const musicBrief = this.buildDailyMusicBrief(this.currentEnergyLevel);
+      console.log(JSON.stringify({ event: 'daily_music_brief_created', ...musicBrief }));
 
       // Step 2: Collect tracks from all sources
-      const allTracks = await this.collectSourceTracks();
+      const allTracks = await this.collectSourceTracks(musicBrief);
       console.log(`Collected ${allTracks.length} tracks from all sources`);
 
       if (allTracks.length === 0) {
@@ -158,7 +175,7 @@ export class PlaylistService {
       }
 
       // Step 4: Select top tracks with diversity
-      const selectedTracks = this.selectTopTracks(scoredTracks, this.config.playlistSize);
+      const selectedTracks = this.selectHybridTracks(scoredTracks, this.config.playlistSize);
       console.log(`Selected ${selectedTracks.length} tracks for playlist`);
 
       // Step 5: Update playlist on Spotify
@@ -177,6 +194,7 @@ export class PlaylistService {
           activity: ouraData.activity?.score,
         },
         message: `Successfully generated ${this.currentEnergyLevel} energy playlist`,
+        musicBrief,
       };
     } catch (error: any) {
       console.error('Error generating playlist:', error.message);
@@ -240,7 +258,7 @@ export class PlaylistService {
   /**
    * Collect tracks from all enabled sources
    */
-  private async collectSourceTracks(): Promise<SpotifyTrack[]> {
+  private async collectSourceTracks(musicBrief: DailyMusicBrief): Promise<SpotifyTrack[]> {
     if (!this.config) {
       return [];
     }
@@ -321,6 +339,21 @@ export class PlaylistService {
       }
     }
 
+    // 3. Add bounded discoveries from Spotify search. Search results stay local;
+    // no Spotify or Oura data is sent to an AI service.
+    if (this.config.sources.search?.enabled) {
+      const search = this.config.sources.search;
+      for (const query of musicBrief.searchQueries.slice(0, Math.max(0, search.maxQueries))) {
+        try {
+          const tracks = await this.spotifyService.searchTracks(query, search.maxTracksPerQuery);
+          tracks.forEach(track => addTrack(track, ['discovery', ...query.split(/\s+/)], search.weight));
+        } catch (error: any) {
+          this.logSourceDegradation(`search:${query}`, error);
+          if (error instanceof SpotifyApiError && error.status === 429) break;
+        }
+      }
+    }
+
     return [...tracksById.values()];
   }
 
@@ -358,35 +391,49 @@ export class PlaylistService {
   /**
    * Select top tracks with diversity (prevent artist over-representation)
    */
-  private selectTopTracks(scoredTracks: ScoredTrack[], targetCount: number): SpotifyTrack[] {
+  private selectHybridTracks(scoredTracks: ScoredTrack[], targetCount: number): SpotifyTrack[] {
     const selected: SpotifyTrack[] = [];
     const artistCounts = new Map<string, number>();
-    const maxPerArtist = Math.max(3, Math.ceil(targetCount / 10)); // At least 3, max 10% from same artist
+    const maxPerArtist = 3;
+    const discoveryRatio = Math.min(0.5, Math.max(0, this.config?.sources.search?.discoveryRatio ?? 0.3));
+    const discoveryTarget = Math.round(targetCount * discoveryRatio);
+    const libraryTarget = targetCount - discoveryTarget;
+    const library = scoredTracks.filter(item => !item.track.sourceTags?.includes('discovery'));
+    const discovery = scoredTracks.filter(item => item.track.sourceTags?.includes('discovery'));
 
-    // First pass: select highest-scored tracks with diversity constraint
-    for (const scoredTrack of scoredTracks) {
-      if (selected.length >= targetCount) break;
-
-      const artist = scoredTrack.track.artists[0];
-      const currentCount = artistCounts.get(artist) || 0;
-
-      if (currentCount < maxPerArtist) {
-        selected.push(scoredTrack.track);
-        artistCounts.set(artist, currentCount + 1);
+    const selectFrom = (pool: ScoredTrack[], limit: number) => {
+      let added = 0;
+      for (const item of pool) {
+        if (added >= limit || selected.length >= targetCount) break;
+        if (selected.some(track => track.id === item.track.id)) continue;
+        const artists = item.track.artists.map(artist => artist.toLowerCase());
+        if (artists.some(artist => (artistCounts.get(artist) || 0) >= maxPerArtist)) continue;
+        selected.push(item.track);
+        artists.forEach(artist => artistCounts.set(artist, (artistCounts.get(artist) || 0) + 1));
+        added++;
       }
-    }
+    };
 
-    // Second pass: if we don't have enough tracks, add more without diversity constraint
-    if (selected.length < targetCount) {
-      for (const scoredTrack of scoredTracks) {
-        if (selected.length >= targetCount) break;
-        if (!selected.find(t => t.id === scoredTrack.track.id)) {
-          selected.push(scoredTrack.track);
-        }
-      }
-    }
+    selectFrom(library, libraryTarget);
+    selectFrom(discovery, discoveryTarget);
+    selectFrom(scoredTracks, targetCount - selected.length);
 
     return selected;
+  }
+
+  buildDailyMusicBrief(energyLevel: EnergyLevel): DailyMusicBrief {
+    const mapping = this.getEnergyMappingForLevel(energyLevel);
+    const maxQueries = Math.max(0, this.config?.sources.search?.maxQueries ?? 4);
+    const genres = mapping.genres.slice(0, 3);
+    const moods = mapping.moodKeywords.slice(0, 3);
+    const searchQueries = genres.map((genre, index) => `${genre} ${moods[index % moods.length]}`)
+      .slice(0, maxQueries);
+    return {
+      energyLevel,
+      title: mapping.name,
+      description: `${mapping.name}: ${moods.join(', ')} music with ${genres.join(', ')} influences.`,
+      searchQueries,
+    };
   }
 
   /**

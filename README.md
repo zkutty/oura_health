@@ -3,8 +3,8 @@
 ## Build and deployment
 
 `npm run build` produces deployable JavaScript and copies runtime configuration
-into `dist/config`. Use `npm run package` to validate the Lambda artifact without
-deploying, or `npm run deploy` to build and deploy it.
+into `dist/config`. `npm run deploy:gcp` builds and deploys the production
+services to Google Cloud Run.
 
 A comprehensive health automation system that integrates your Oura Ring data with Spotify, smart lighting, and Alexa to create an adaptive environment based on your sleep, readiness, and activity scores.
 
@@ -16,10 +16,11 @@ A comprehensive health automation system that integrates your Oura Ring data wit
 - Trigger playlist generation and lighting changes
 
 ### Adaptive Music (Spotify)
-- Daily playlist generation at 7:45 AM based on your health scores
+- Event-driven daily playlist generation after complete sleep/readiness data arrives
 - High readiness → energetic music, low readiness → calming music
 - Durable retry state ensures fresh overnight data without duplicate regeneration after a cold start
-- Pulls from your saved tracks and your own playlists, then ranks by energy/mood metadata and configured source weight
+- Uses an approximately 70/30 mix of your library and bounded Spotify search discoveries
+- Ranks locally from an Oura-derived music brief; no Oura or Spotify data is sent to an AI service
 
 ### Smart Lighting (Govee)
 - Automatic morning lighting based on health scores (7 AM)
@@ -102,12 +103,8 @@ and post-deployment Oura subscription step.
 - **Music**: Spotify Web API with playlist generation algorithms
 - **Lighting**: Govee API with scene management and music sync
 - **Voice Control**: Custom Alexa skill with multiple intents
-- **Automation**: node-cron for scheduled tasks (7 AM, 7:45 AM, 9 PM)
-
-AWS deployments execute those times in `America/New_York`. EventBridge rules
-cover both the EST and EDT UTC offsets, and each Lambda validates the local time
-before doing work. This keeps the schedule stable across daylight-saving changes;
-the extra offset invocation exits without running automation.
+- **Production automation**: Cloud Run, Cloud Tasks, Cloud Scheduler, Firestore, and Secret Manager
+- **Local development automation**: node-cron when the local Express server is running
 
 ## Documentation
 
@@ -128,11 +125,12 @@ the extra offset invocation exits without running automation.
 3. Applies lighting scene based on energy level
 4. Executes any configured smart home actions
 
-### Playlist Generation (7:45 AM)
-1. Checks if Oura data is fresh (from last night)
-2. Generates Spotify playlist matching your energy level
-3. Pulls tracks from your saved library and playlists; unavailable sources degrade independently
-4. Optionally syncs lighting to match playlist mood
+### Playlist Generation
+1. An Oura webhook exports the day after sleep and readiness are both complete
+2. A separate Cloud Task claims the date transactionally in Firestore
+3. It builds a deterministic music brief and gathers library tracks plus bounded search discoveries
+4. It ranks locally, caps each artist at three tracks, updates Spotify, and records the snapshot
+5. An 8:15 AM Eastern Cloud Scheduler fallback queues the same idempotent flow
 
 ### Throughout the Day
 - Manual control via REST API
@@ -205,7 +203,7 @@ All behavior is configuration-driven:
 ### Morning Flow (Automatic)
 ```
 7:00 AM → Oura data fetched → Lighting applied based on energy level
-7:45 AM → Playlist generated with matching music → Lights sync to music
+Oura data complete → Playlist generated with matching music
 ```
 
 ### Manual Control
@@ -277,7 +275,7 @@ oura_health/
 - **Web Framework**: Express
 - **Scheduling**: node-cron
 - **APIs**: Oura v2, Spotify Web API, Govee API, Alexa Skills Kit
-- **HTTP Client**: axios with interceptors for token refresh; rotated tokens persist in Google Secret Manager or encrypted AWS SSM parameters
+- **HTTP Client**: axios with interceptors for token refresh; rotated tokens persist in Google Secret Manager
 
 ## License
 

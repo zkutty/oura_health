@@ -69,4 +69,84 @@ describe('PlaylistService supported Spotify sources', () => {
     expect(warning).toHaveBeenCalledWith(expect.stringContaining('spotify_source_degraded'));
     warning.mockRestore();
   });
+
+  it('builds a bounded deterministic music brief', () => {
+    const service = new PlaylistService({} as SpotifyService);
+    service.loadConfig({
+      ...(spotifyConfig as PlaylistConfig),
+      sources: {
+        ...(spotifyConfig.sources as PlaylistConfig['sources']),
+        search: { enabled: true, weight: 0.25, maxQueries: 2, maxTracksPerQuery: 10, discoveryRatio: 0.3 },
+      },
+    });
+    const brief = service.buildDailyMusicBrief('low');
+    expect(brief.energyLevel).toBe('low');
+    expect(brief.searchQueries).toEqual(['indie mellow', 'folk easy']);
+  });
+
+  it('keeps a 70/30 library-discovery mix and caps each artist at three tracks', async () => {
+    const track = (id: string, artist: string): SpotifyTrack => ({
+      id,
+      name: `Energetic ${id}`,
+      artists: [artist],
+      uri: `spotify:track:${id}`,
+      duration_ms: 180000,
+    });
+    const library = [
+      ...Array.from({ length: 5 }, (_, index) => track(`repeat-${index}`, 'Repeat Artist')),
+      ...Array.from({ length: 12 }, (_, index) => track(`library-${index}`, `Library Artist ${index}`)),
+    ];
+    const discoveries = Array.from({ length: 12 }, (_, index) => track(`discovery-${index}`, `Discovery Artist ${index}`));
+    const spotify = {
+      getUserSavedTracks: vi.fn().mockResolvedValue(library),
+      getUserPlaylists: vi.fn().mockResolvedValue([]),
+      searchTracks: vi.fn().mockResolvedValue(discoveries),
+      replacePlaylistTracks: vi.fn().mockResolvedValue(undefined),
+    } as unknown as SpotifyService;
+    const service = new PlaylistService(spotify);
+    service.loadConfig({
+      ...(spotifyConfig as PlaylistConfig),
+      playlistSize: 10,
+      sources: {
+        ...(spotifyConfig.sources as PlaylistConfig['sources']),
+        userPlaylists: { ...spotifyConfig.sources.userPlaylists, enabled: false },
+        search: { enabled: true, weight: 0.25, maxQueries: 1, maxTracksPerQuery: 10, discoveryRatio: 0.3 },
+      },
+    });
+
+    await service.generateDailyPlaylist({
+      date: '2026-07-18',
+      readiness: { day: '2026-07-18', score: 86, temperature_deviation: 0 },
+      sleep: { day: '2026-07-18', score: 86 } as any,
+    });
+
+    expect(spotify.searchTracks).toHaveBeenCalledTimes(1);
+    const uris = (spotify.replacePlaylistTracks as any).mock.calls[0][1] as string[];
+    expect(uris).toHaveLength(10);
+    expect(uris.filter(uri => uri.includes('discovery-'))).toHaveLength(3);
+    expect(uris.filter(uri => uri.includes('repeat-')).length).toBeLessThanOrEqual(3);
+  });
+
+  it('stops further discovery calls after a Spotify 429 and still uses the library', async () => {
+    const spotify = {
+      getUserSavedTracks: vi.fn().mockResolvedValue([{
+        id: 'saved', name: 'Saved', artists: ['Artist'], uri: 'spotify:track:saved', duration_ms: 1,
+      }]),
+      getUserPlaylists: vi.fn().mockResolvedValue([]),
+      searchTracks: vi.fn().mockRejectedValue(new SpotifyApiError('rate limited', 429)),
+      replacePlaylistTracks: vi.fn().mockResolvedValue(undefined),
+    } as unknown as SpotifyService;
+    const service = new PlaylistService(spotify);
+    service.loadConfig({ ...(spotifyConfig as PlaylistConfig), playlistSize: 1 });
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const result = await service.generateDailyPlaylist({
+      date: '2026-07-18',
+      readiness: { day: '2026-07-18', score: 70, temperature_deviation: 0 },
+      sleep: { day: '2026-07-18', score: 70 } as any,
+    });
+    expect(result.success).toBe(true);
+    expect(spotify.searchTracks).toHaveBeenCalledTimes(1);
+    expect(warning).toHaveBeenCalledWith(expect.stringContaining('429'));
+    warning.mockRestore();
+  });
 });

@@ -1,5 +1,7 @@
 import { CloudTasksClient } from '@google-cloud/tasks';
+import { ExpressAdapter } from 'ask-sdk-express-adapter';
 import express from 'express';
+import { skillBuilder } from '../handlers/alexaHandlers';
 import {
   createOuraWebhookReplayKey,
   parseOuraWebhookEvent,
@@ -13,6 +15,9 @@ const tasks = new CloudTasksClient();
 const replayStore = new FirestoreWebhookReplayStore();
 
 app.get('/health', (_request, response) => response.status(200).json({ status: 'ok' }));
+
+const alexaAdapter = new ExpressAdapter(skillBuilder, false, false);
+app.post('/alexa', alexaAdapter.getRequestHandlers());
 
 app.get('/oura-webhook', (request, response) => {
   const token = String(request.query.verification_token || '');

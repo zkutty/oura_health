@@ -24,6 +24,10 @@ fi
 : "${OURA_CLIENT_SECRET:?OURA_CLIENT_SECRET is required.}"
 : "${OURA_WEBHOOK_VERIFICATION_TOKEN:?OURA_WEBHOOK_VERIFICATION_TOKEN is required.}"
 : "${GOOGLE_OURA_DOCUMENT_ID:?GOOGLE_OURA_DOCUMENT_ID is required.}"
+: "${SPOTIFY_ACCESS_TOKEN:?SPOTIFY_ACCESS_TOKEN is required.}"
+: "${SPOTIFY_REFRESH_TOKEN:?SPOTIFY_REFRESH_TOKEN is required.}"
+: "${SPOTIFY_CLIENT_ID:?SPOTIFY_CLIENT_ID is required.}"
+: "${SPOTIFY_CLIENT_SECRET:?SPOTIFY_CLIENT_SECRET is required.}"
 
 GCP_REGION="${GCP_REGION:-us-east1}"
 GCP_FIRESTORE_LOCATION="${GCP_FIRESTORE_LOCATION:-us-east1}"
@@ -135,7 +139,17 @@ put_secret oura-client-secret "${OURA_CLIENT_SECRET}"
 put_secret oura-webhook-verification-token "${OURA_WEBHOOK_VERIFICATION_TOKEN}"
 put_secret google-oura-document-id "${GOOGLE_OURA_DOCUMENT_ID}"
 
-for token_secret in oura-access-token oura-refresh-token; do
+if [[ "${GCP_SYNC_SPOTIFY_TOKENS:-false}" == "true" ]]; then
+  put_secret spotify-access-token "${SPOTIFY_ACCESS_TOKEN}"
+  put_secret spotify-refresh-token "${SPOTIFY_REFRESH_TOKEN}"
+else
+  put_rotating_secret spotify-access-token "${SPOTIFY_ACCESS_TOKEN}"
+  put_rotating_secret spotify-refresh-token "${SPOTIFY_REFRESH_TOKEN}"
+fi
+put_secret spotify-client-id "${SPOTIFY_CLIENT_ID}"
+put_secret spotify-client-secret "${SPOTIFY_CLIENT_SECRET}"
+
+for token_secret in oura-access-token oura-refresh-token spotify-access-token spotify-refresh-token; do
   gcloud secrets add-iam-policy-binding "${token_secret}" \
     --member="serviceAccount:${GCP_RUNTIME_SERVICE_ACCOUNT}" \
     --role="roles/secretmanager.secretVersionAdder" >/dev/null
@@ -147,8 +161,8 @@ gcloud builds submit \
   --default-buckets-behavior=regional-user-owned-bucket \
   --tag "${GCP_IMAGE}" .
 
-COMMON_ENV="GCP_PROJECT_ID=${GCP_PROJECT_ID},GCP_LOCATION=${GCP_REGION},GOOGLE_USE_APPLICATION_DEFAULT_CREDENTIALS=true,OURA_TOKEN_PERSISTENCE=gcp-secret-manager,OURA_ACCESS_TOKEN_SECRET_ID=oura-access-token,OURA_REFRESH_TOKEN_SECRET_ID=oura-refresh-token"
-WORKER_SECRETS="OURA_ACCESS_TOKEN=oura-access-token:latest,OURA_REFRESH_TOKEN=oura-refresh-token:latest,OURA_CLIENT_ID=oura-client-id:latest,OURA_CLIENT_SECRET=oura-client-secret:latest,GOOGLE_OURA_DOCUMENT_ID=google-oura-document-id:latest"
+COMMON_ENV="GCP_PROJECT_ID=${GCP_PROJECT_ID},GCP_LOCATION=${GCP_REGION},GOOGLE_USE_APPLICATION_DEFAULT_CREDENTIALS=true,OURA_TOKEN_PERSISTENCE=gcp-secret-manager,OURA_ACCESS_TOKEN_SECRET_ID=oura-access-token,OURA_REFRESH_TOKEN_SECRET_ID=oura-refresh-token,SPOTIFY_TOKEN_PERSISTENCE=gcp-secret-manager,SPOTIFY_ACCESS_TOKEN_SECRET_ID=spotify-access-token,SPOTIFY_REFRESH_TOKEN_SECRET_ID=spotify-refresh-token"
+WORKER_SECRETS="OURA_ACCESS_TOKEN=oura-access-token:latest,OURA_REFRESH_TOKEN=oura-refresh-token:latest,OURA_CLIENT_ID=oura-client-id:latest,OURA_CLIENT_SECRET=oura-client-secret:latest,GOOGLE_OURA_DOCUMENT_ID=google-oura-document-id:latest,SPOTIFY_ACCESS_TOKEN=spotify-access-token:latest,SPOTIFY_REFRESH_TOKEN=spotify-refresh-token:latest,SPOTIFY_CLIENT_ID=spotify-client-id:latest,SPOTIFY_CLIENT_SECRET=spotify-client-secret:latest"
 
 gcloud run deploy "${GCP_WORKER_SERVICE}" \
   --image="${GCP_IMAGE}" \
@@ -158,9 +172,14 @@ gcloud run deploy "${GCP_WORKER_SERVICE}" \
   --set-env-vars="GCP_SERVICE_MODE=worker,${COMMON_ENV}" \
   --set-secrets="${WORKER_SECRETS}" \
   --memory=512Mi \
-  --timeout=120
+  --timeout=300
 
 GCP_WORKER_URL="$(gcloud run services describe "${GCP_WORKER_SERVICE}" --region="${GCP_REGION}" --format='value(status.url)')"
+
+gcloud run services update "${GCP_WORKER_SERVICE}" \
+  --region="${GCP_REGION}" \
+  --update-env-vars="GCP_TASK_QUEUE=${GCP_TASK_QUEUE},GCP_WORKER_URL=${GCP_WORKER_URL},GCP_TASK_OIDC_SERVICE_ACCOUNT=${GCP_RUNTIME_SERVICE_ACCOUNT}" \
+  --quiet >/dev/null
 
 gcloud run services add-iam-policy-binding "${GCP_WORKER_SERVICE}" \
   --region="${GCP_REGION}" \
@@ -183,8 +202,8 @@ else
     --max-doublings=4
 fi
 
-WEBHOOK_ENV="GCP_SERVICE_MODE=webhook,GCP_PROJECT_ID=${GCP_PROJECT_ID},GCP_LOCATION=${GCP_REGION},GCP_TASK_QUEUE=${GCP_TASK_QUEUE},GCP_WORKER_URL=${GCP_WORKER_URL},GCP_TASK_OIDC_SERVICE_ACCOUNT=${GCP_RUNTIME_SERVICE_ACCOUNT}"
-WEBHOOK_SECRETS="OURA_CLIENT_SECRET=oura-client-secret:latest,OURA_WEBHOOK_VERIFICATION_TOKEN=oura-webhook-verification-token:latest"
+WEBHOOK_ENV="GCP_SERVICE_MODE=webhook,${COMMON_ENV},GCP_TASK_QUEUE=${GCP_TASK_QUEUE},GCP_WORKER_URL=${GCP_WORKER_URL},GCP_TASK_OIDC_SERVICE_ACCOUNT=${GCP_RUNTIME_SERVICE_ACCOUNT}"
+WEBHOOK_SECRETS="OURA_ACCESS_TOKEN=oura-access-token:latest,OURA_REFRESH_TOKEN=oura-refresh-token:latest,OURA_CLIENT_ID=oura-client-id:latest,OURA_CLIENT_SECRET=oura-client-secret:latest,OURA_WEBHOOK_VERIFICATION_TOKEN=oura-webhook-verification-token:latest"
 
 gcloud run deploy "${GCP_WEBHOOK_SERVICE}" \
   --image="${GCP_IMAGE}" \
@@ -198,6 +217,7 @@ gcloud run deploy "${GCP_WEBHOOK_SERVICE}" \
 
 GCP_WEBHOOK_URL="$(gcloud run services describe "${GCP_WEBHOOK_SERVICE}" --region="${GCP_REGION}" --format='value(status.url)')"
 GCP_RECONCILIATION_URI="${GCP_WORKER_URL}/tasks/reconcile"
+GCP_PLAYLIST_FALLBACK_URI="${GCP_WORKER_URL}/tasks/playlist-fallback"
 
 if gcloud scheduler jobs describe oura-export-reconciliation --location="${GCP_REGION}" >/dev/null 2>&1; then
   gcloud scheduler jobs update http oura-export-reconciliation \
@@ -223,9 +243,45 @@ else
     --oidc-token-audience="${GCP_WORKER_URL}"
 fi
 
+if gcloud scheduler jobs describe oura-playlist-fallback --location="${GCP_REGION}" >/dev/null 2>&1; then
+  gcloud scheduler jobs update http oura-playlist-fallback \
+    --location="${GCP_REGION}" \
+    --schedule='15 8 * * *' \
+    --time-zone='America/New_York' \
+    --uri="${GCP_PLAYLIST_FALLBACK_URI}" \
+    --http-method=POST \
+    --update-headers='Content-Type=application/json' \
+    --message-body='{}' \
+    --oidc-service-account-email="${GCP_RUNTIME_SERVICE_ACCOUNT}" \
+    --oidc-token-audience="${GCP_WORKER_URL}" >/dev/null
+else
+  gcloud scheduler jobs create http oura-playlist-fallback \
+    --location="${GCP_REGION}" \
+    --schedule='15 8 * * *' \
+    --time-zone='America/New_York' \
+    --uri="${GCP_PLAYLIST_FALLBACK_URI}" \
+    --http-method=POST \
+    --headers='Content-Type=application/json' \
+    --message-body='{}' \
+    --oidc-service-account-email="${GCP_RUNTIME_SERVICE_ACCOUNT}" \
+    --oidc-token-audience="${GCP_WORKER_URL}"
+fi
+
+if [[ "${GCP_ENABLE_AUTOMATION_CUTOVER:-false}" == "true" ]]; then
+  gcloud scheduler jobs resume oura-export-reconciliation --location="${GCP_REGION}" >/dev/null || true
+  gcloud scheduler jobs resume oura-playlist-fallback --location="${GCP_REGION}" >/dev/null || true
+else
+  gcloud scheduler jobs pause oura-export-reconciliation --location="${GCP_REGION}" >/dev/null || true
+  gcloud scheduler jobs pause oura-playlist-fallback --location="${GCP_REGION}" >/dev/null || true
+fi
+
 echo
 echo "Google Cloud deployment complete."
 echo "Share the Google Doc with this Editor account: ${GCP_RUNTIME_SERVICE_ACCOUNT}"
 echo "Set this callback URL in .env:"
 echo "OURA_WEBHOOK_CALLBACK_URL=${GCP_WEBHOOK_URL}/oura-webhook"
 echo "Then run: npm run manage:oura-webhooks"
+echo "Set the Alexa skill endpoint to: ${GCP_WEBHOOK_URL}/alexa"
+if [[ "${GCP_ENABLE_AUTOMATION_CUTOVER:-false}" != "true" ]]; then
+  echo "Schedulers are paused. Set GCP_ENABLE_AUTOMATION_CUTOVER=true and redeploy after confirming AWS schedules are disabled."
+fi

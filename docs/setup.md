@@ -107,8 +107,8 @@ Quick steps:
 ### Google Docs Oura Log
 
 The daily Oura export can publish to a Google Doc in the same date-oriented form
-as the Hevy Training Log. The application uses a service account so it works from
-either your local server or AWS Lambda.
+as the Hevy Training Log. The application uses a service account locally and
+Cloud Run's attached service account in production.
 
 1. In Google Cloud, create a service account and enable the Google Docs API.
 2. Create or select the Google Doc that will hold the Oura daily log.
@@ -128,7 +128,7 @@ matching marked entry instead of adding a duplicate.
 
 ### Oura Webhooks
 
-Webhooks replace routine polling once the Lambda deployment is public. The GET
+Webhooks replace routine polling once the Cloud Run deployment is public. The GET
 and POST endpoints are separate from the general Express REST API; the POST
 endpoint validates Oura's HMAC signature over the raw request body, rejects
 requests more than five minutes old or duplicate deliveries, and queues valid
@@ -139,12 +139,12 @@ events for later work.
 
    ```env
    OURA_WEBHOOK_VERIFICATION_TOKEN=replace-with-a-random-secret
-   OURA_WEBHOOK_CALLBACK_URL=https://YOUR_API_ID.execute-api.us-east-1.amazonaws.com/dev/oura-webhook
+   OURA_WEBHOOK_CALLBACK_URL=https://YOUR_CLOUD_RUN_URL/oura-webhook
    OURA_WEBHOOK_EVENT_TYPES=update
    ```
 
-2. Deploy with `npm run deploy`. Copy the deployed API Gateway URL into
-   `OURA_WEBHOOK_CALLBACK_URL`, including the stage and `/oura-webhook` path.
+2. Deploy with `npm run deploy:gcp`. Copy the printed Cloud Run URL into
+   `OURA_WEBHOOK_CALLBACK_URL`, including the `/oura-webhook` path.
 3. Create missing subscriptions (safe to re-run):
 
    ```bash
@@ -155,7 +155,7 @@ events for later work.
    `daily_resilience` updates using the configured callback URL. Oura verifies
    the GET endpoint during creation.
 
-4. Send an Oura test event and check CloudWatch for a generic queued-event log.
+4. Send an Oura test event and check Cloud Run logs for a generic queued-event log.
    Event payloads, signatures, client secrets, and verification tokens are never
    written to logs.
 
@@ -163,7 +163,7 @@ The queue consumer fetches the exact day identified by each verified event. It
 does not publish a final entry until both sleep and readiness are present;
 later activity and resilience events replace the marked entry for that day.
 
-Once per day, a reconciliation Lambda rechecks the previous seven calendar
+Once per day, Cloud Scheduler asks the private worker to recheck the previous seven calendar
 days. This repairs missed webhooks, delayed mobile syncs, and failed exports
 without making polling the normal ingestion path. To re-export a particular
 day on demand, run:
@@ -371,28 +371,11 @@ Example action in `smartHomeConfig.json`:
 - [ ] Configure smart home actions
 - [ ] Test scheduled automation
 
-### Deployment Options
+### Deployment
 
-**Option 1: AWS Lambda (Recommended)**
-- Serverless, scales automatically
-- Use Serverless Framework or AWS SAM
-- Set up environment variables in Lambda
-- Configure API Gateway endpoint
-- Use CloudWatch for logging
-
-**Option 2: VPS (DigitalOcean, AWS EC2, etc.)**
-- Install Node.js 18+
-- Clone repository
-- Install dependencies: `npm install`
-- Set up environment variables
-- Use PM2 for process management: `pm2 start dist/index.js`
-- Set up SSL certificate (Let's Encrypt)
-- Configure firewall (allow port 443)
-
-**Option 3: Docker**
-- Create Dockerfile (not included, needs to be created)
-- Build image
-- Deploy to container service
+Production runs on Google Cloud Run with Cloud Tasks, Cloud Scheduler,
+Firestore, and Secret Manager. Follow [Google Cloud deployment](gcp-setup.md).
+The local Express server remains available for development.
 
 ### Environment Variables for Production
 

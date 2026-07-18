@@ -335,7 +335,7 @@ export class SpotifyService {
         params: {
           q: query,
           type: 'track',
-          limit: Math.min(limit, 10),
+          limit: Math.min(Math.max(1, limit), 10),
         },
       });
 
@@ -349,7 +349,7 @@ export class SpotifyService {
       }));
     } catch (error: any) {
       console.error('Error searching tracks:', error.message);
-      throw new Error('Failed to search tracks on Spotify');
+      throw this.apiError('Failed to search tracks on Spotify', error);
     }
   }
 

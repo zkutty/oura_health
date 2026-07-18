@@ -1,5 +1,4 @@
 import { SecretManagerServiceClient } from '@google-cloud/secret-manager';
-import { GetParameterCommand, PutParameterCommand, SSMClient } from '@aws-sdk/client-ssm';
 
 export interface OAuthTokens {
   accessToken: string;
@@ -54,47 +53,6 @@ class GcpSecretManagerTokenStore implements OAuthTokenStore {
   }
 }
 
-class AwsSsmTokenStore implements OAuthTokenStore {
-  private readonly client = new SSMClient({});
-
-  constructor(
-    private readonly accessParameter: string,
-    private readonly refreshParameter: string
-  ) {}
-
-  async load(): Promise<OAuthTokens | undefined> {
-    try {
-      const [accessResult, refreshResult] = await Promise.all([
-        this.client.send(new GetParameterCommand({ Name: this.accessParameter, WithDecryption: true })),
-        this.client.send(new GetParameterCommand({ Name: this.refreshParameter, WithDecryption: true })),
-      ]);
-      const accessToken = accessResult.Parameter?.Value;
-      const refreshToken = refreshResult.Parameter?.Value;
-      return accessToken && refreshToken ? { accessToken, refreshToken } : undefined;
-    } catch (error: any) {
-      if (error?.name === 'ParameterNotFound') return undefined;
-      throw error;
-    }
-  }
-
-  async save(tokens: OAuthTokens): Promise<void> {
-    await Promise.all([
-      this.client.send(new PutParameterCommand({
-        Name: this.accessParameter,
-        Value: tokens.accessToken,
-        Type: 'SecureString',
-        Overwrite: true,
-      })),
-      this.client.send(new PutParameterCommand({
-        Name: this.refreshParameter,
-        Value: tokens.refreshToken,
-        Type: 'SecureString',
-        Overwrite: true,
-      })),
-    ]);
-  }
-}
-
 export function createOAuthTokenStore(provider: OAuthProvider): OAuthTokenStore | undefined {
   const persistence = process.env[`${provider}_TOKEN_PERSISTENCE`];
   if (!persistence || persistence === 'none') return undefined;
@@ -107,15 +65,6 @@ export function createOAuthTokenStore(provider: OAuthProvider): OAuthTokenStore 
       throw new Error(`${provider} Secret Manager token persistence is missing required configuration`);
     }
     return new GcpSecretManagerTokenStore(projectId, accessSecretId, refreshSecretId);
-  }
-
-  if (persistence === 'aws-ssm') {
-    const stage = process.env.AWS_STAGE || process.env.STAGE || 'dev';
-    const basePath = `/oura-health/${stage}/${provider.toLowerCase()}`;
-    return new AwsSsmTokenStore(
-      process.env[`${provider}_ACCESS_TOKEN_PARAMETER`] || `${basePath}/access-token`,
-      process.env[`${provider}_REFRESH_TOKEN_PARAMETER`] || `${basePath}/refresh-token`
-    );
   }
 
   throw new Error(`Unsupported ${provider} token persistence backend: ${persistence}`);

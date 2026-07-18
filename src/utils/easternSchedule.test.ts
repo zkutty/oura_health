@@ -39,11 +39,10 @@ describe('Eastern automation scheduling', () => {
     expect(getEasternDate('2026-01-19T04:30:00.000Z')).toBe('2026-01-18');
   });
 
-  it('keeps EventBridge rules on both EST and EDT candidate offsets', () => {
-    const serverlessConfig = readFileSync(resolve(process.cwd(), 'serverless.yml'), 'utf8');
-    expect(serverlessConfig).toContain('cron(0 11,12 * * ? *)');
-    expect(serverlessConfig).toContain('cron(45 11,12 * * ? *)');
-    expect(serverlessConfig).toContain('cron(0 12-18 * * ? *)');
-    expect(serverlessConfig).toContain('cron(0 1,2 * * ? *)');
+  it('configures Cloud Scheduler in the New York time zone', () => {
+    const deploymentScript = readFileSync(resolve(process.cwd(), 'scripts/deploy-gcp.sh'), 'utf8');
+    expect(deploymentScript).toContain("--schedule='15 8 * * *'");
+    expect(deploymentScript).toContain("--schedule='15 11 * * *'");
+    expect(deploymentScript.match(/--time-zone='America\/New_York'/g)).toHaveLength(4);
   });
 });

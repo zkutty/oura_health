@@ -247,6 +247,13 @@
       "excludeIds": [],
       "maxPlaylists": 10,
       "maxTracksPerPlaylist": 100
+    },
+    "search": {
+      "enabled": true,
+      "weight": 0.25,
+      "maxQueries": 4,
+      "maxTracksPerQuery": 10,
+      "discoveryRatio": 0.3
     }
   },
   "schedule": {
