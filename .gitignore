@@ -8,3 +8,5 @@ dist/
 *~
 credentials/
 *-service-account*.json
+exports/
+.serverless/

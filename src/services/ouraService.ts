@@ -1,4 +1,5 @@
 import axios, { AxiosInstance } from 'axios';
+import { SecretManagerServiceClient } from '@google-cloud/secret-manager';
 
 export interface OuraSleepData {
   day: string;
@@ -96,6 +97,7 @@ export class OuraService {
   private refreshToken: string;
   private clientId: string;
   private clientSecret: string;
+  private refreshPromise?: Promise<void>;
 
   constructor() {
     this.accessToken = process.env.OURA_ACCESS_TOKEN || '';
@@ -115,12 +117,14 @@ export class OuraService {
     this.client.interceptors.response.use(
       (response) => response,
       async (error) => {
-        if (error.response?.status === 401 && this.refreshToken) {
+        const requestConfig = error.config as (typeof error.config & { _ouraRefreshRetried?: boolean });
+        if (error.response?.status === 401 && this.refreshToken && !requestConfig?._ouraRefreshRetried) {
           try {
-            await this.refreshAccessToken();
+            requestConfig._ouraRefreshRetried = true;
+            await this.refreshAccessTokenOnce();
             // Retry the original request
-            error.config.headers.Authorization = `Bearer ${this.accessToken}`;
-            return this.client.request(error.config);
+            requestConfig.headers.Authorization = `Bearer ${this.accessToken}`;
+            return this.client.request(requestConfig);
           } catch (refreshError) {
             throw refreshError;
           }
@@ -130,14 +134,28 @@ export class OuraService {
     );
   }
 
+  private refreshAccessTokenOnce(): Promise<void> {
+    if (!this.refreshPromise) {
+      this.refreshPromise = this.refreshAccessToken().finally(() => {
+        this.refreshPromise = undefined;
+      });
+    }
+    return this.refreshPromise;
+  }
+
   private async refreshAccessToken(): Promise<void> {
     try {
-      const response = await axios.post('https://api.ouraring.com/oauth/token', {
+      const body = new URLSearchParams({
         grant_type: 'refresh_token',
         refresh_token: this.refreshToken,
         client_id: this.clientId,
         client_secret: this.clientSecret,
       });
+      const response = await axios.post(
+        'https://api.ouraring.com/oauth/token',
+        body.toString(),
+        { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
+      );
 
       this.accessToken = response.data.access_token;
       if (response.data.refresh_token) {
@@ -146,9 +164,30 @@ export class OuraService {
 
       // Update the default authorization header
       this.client.defaults.headers.Authorization = `Bearer ${this.accessToken}`;
+      await this.persistRefreshedTokens();
     } catch (error) {
       throw new Error('Failed to refresh Oura access token');
     }
+  }
+
+  private async persistRefreshedTokens(): Promise<void> {
+    if (process.env.OURA_TOKEN_PERSISTENCE !== 'gcp-secret-manager') return;
+    const projectId = process.env.GCP_PROJECT_ID;
+    const accessSecretId = process.env.OURA_ACCESS_TOKEN_SECRET_ID;
+    const refreshSecretId = process.env.OURA_REFRESH_TOKEN_SECRET_ID;
+    if (!projectId || !accessSecretId || !refreshSecretId) return;
+
+    const client = new SecretManagerServiceClient();
+    await Promise.all([
+      client.addSecretVersion({
+        parent: `projects/${projectId}/secrets/${accessSecretId}`,
+        payload: { data: Buffer.from(this.accessToken, 'utf8') },
+      }),
+      client.addSecretVersion({
+        parent: `projects/${projectId}/secrets/${refreshSecretId}`,
+        payload: { data: Buffer.from(this.refreshToken, 'utf8') },
+      }),
+    ]);
   }
 
   async getSleepData(startDate?: string, endDate?: string): Promise<OuraSleepData[]> {
@@ -161,11 +200,6 @@ export class OuraService {
       const response = await this.client.get('/usercollection/sleep', { params });
       const data = response.data.data || [];
       console.log(`[OuraService] Sleep API returned ${data.length} records`);
-
-      // Log the actual data structure to understand the date field
-      if (data.length > 0) {
-        console.log(`[OuraService] Sample sleep record:`, JSON.stringify(data[0], null, 2));
-      }
 
       return data;
     } catch (error: any) {
@@ -374,7 +408,10 @@ export class OuraService {
       this.getSleepData(startDate, date),
       this.getReadinessData(startDate, date),
       this.getActivityData(startDate, date),
-      this.getResilienceData(startDate, date),
+      this.getResilienceData(startDate, date).catch((error) => {
+        console.warn(`[OuraService] Optional resilience data unavailable for ${date}: ${error.message}`);
+        return [];
+      }),
     ]);
 
     return {
@@ -384,6 +421,36 @@ export class OuraService {
       activity: this.getRecordForDay(activityData, date),
       resilience: this.getRecordForDay(resilienceData, date),
     };
+  }
+
+  /**
+   * Resolves an Oura webhook object to its calendar day without guessing from
+   * the newest record. Guessing would let an out-of-order event overwrite a
+   * different day's export.
+   */
+  async getDayForWebhookObject(dataType: string, objectId: string): Promise<string> {
+    const supportedCollections = new Set([
+      'sleep',
+      'daily_readiness',
+      'daily_activity',
+      'daily_resilience',
+    ]);
+    if (!supportedCollections.has(dataType)) {
+      throw new Error(`Unsupported Oura webhook data type: ${dataType}`);
+    }
+
+    const end = new Date();
+    const start = new Date(end);
+    start.setUTCDate(start.getUTCDate() - 14);
+    const startDate = start.toISOString().split('T')[0];
+    const endDate = end.toISOString().split('T')[0];
+    const records = await this.fetchCollection(dataType, startDate, endDate);
+    const record = records.find((item: any) => item?.id === objectId);
+
+    if (!record || typeof record.day !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(record.day)) {
+      throw new Error(`Unable to resolve Oura webhook object ${objectId} to a calendar day.`);
+    }
+    return record.day;
   }
 
   async getYesterdaySummary(): Promise<OuraDailySummary> {

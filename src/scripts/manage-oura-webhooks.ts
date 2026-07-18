@@ -2,7 +2,7 @@ import 'dotenv/config';
 import axios from 'axios';
 
 const OURA_WEBHOOK_URL = 'https://api.ouraring.com/v2/webhook/subscription';
-const DEFAULT_DATA_TYPES = ['sleep', 'daily_readiness'];
+const DEFAULT_DATA_TYPES = ['sleep', 'daily_readiness', 'daily_activity', 'daily_resilience'];
 
 interface OuraWebhookSubscription {
   id?: string;

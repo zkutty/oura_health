@@ -81,6 +81,20 @@ npm run export:oura -- --date 2026-07-16
 The command writes a local JSON artifact under `data/exports/oura/` and publishes
 the same record to Google Docs when the Google credentials are configured.
 
+Webhook exports wait for both sleep and readiness data before publishing. A
+daily reconciliation job rechecks the previous seven days and repairs missing
+or delayed records; use the command above to re-export a specific day manually.
+
+The webhook and reconciliation pipeline can be deployed to Google Cloud Run
+with Firestore, Cloud Tasks, Cloud Scheduler, and Secret Manager:
+
+```bash
+npm run deploy:gcp
+```
+
+See [Google Cloud deployment](docs/gcp-setup.md) for the one-time project setup
+and post-deployment Oura subscription step.
+
 ## Architecture
 
 - **Backend**: Node.js/TypeScript with Express

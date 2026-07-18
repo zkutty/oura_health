@@ -1,6 +1,7 @@
 service: oura-health
 
 frameworkVersion: '3'
+useDotenv: true
 
 provider:
   name: aws
@@ -21,6 +22,8 @@ provider:
       Ref: OuraWebhookQueue
     OURA_WEBHOOK_REPLAY_TABLE:
       Ref: OuraWebhookReplayTable
+    OURA_EXPORT_STATE_TABLE:
+      Ref: OuraExportStateTable
     SPOTIFY_CLIENT_ID: ${env:SPOTIFY_CLIENT_ID}
     SPOTIFY_CLIENT_SECRET: ${env:SPOTIFY_CLIENT_SECRET}
     SPOTIFY_ACCESS_TOKEN: ${env:SPOTIFY_ACCESS_TOKEN}
@@ -55,6 +58,14 @@ provider:
           Resource:
             Fn::GetAtt:
               - OuraWebhookReplayTable
+              - Arn
+        - Effect: Allow
+          Action:
+            - dynamodb:UpdateItem
+            - dynamodb:GetItem
+          Resource:
+            Fn::GetAtt:
+              - OuraExportStateTable
               - Arn
         - Effect: Allow
           Action:
@@ -101,6 +112,16 @@ functions:
               - OuraWebhookQueue
               - Arn
           batchSize: 1
+
+  # Repairs incomplete or missed daily exports. Runs once per day at 15:15 UTC.
+  ouraExportReconciliation:
+    handler: dist/lambda/index.reconcileOuraExports
+    timeout: 120
+    events:
+      - schedule:
+          rate: cron(15 15 * * ? *)
+          enabled: true
+          description: Reconcile recent Oura daily exports
 
   # Morning automation - runs at 7:00 AM daily
   morningAutomation:
@@ -160,6 +181,16 @@ resources:
       Properties:
         VisibilityTimeout: 120
         MessageRetentionPeriod: 1209600
+        RedrivePolicy:
+          deadLetterTargetArn:
+            Fn::GetAtt:
+              - OuraWebhookDeadLetterQueue
+              - Arn
+          maxReceiveCount: 5
+    OuraWebhookDeadLetterQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        MessageRetentionPeriod: 1209600
     OuraWebhookReplayTable:
       Type: AWS::DynamoDB::Table
       Properties:
@@ -173,6 +204,16 @@ resources:
         TimeToLiveSpecification:
           AttributeName: expiresAt
           Enabled: true
+    OuraExportStateTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: date
+            AttributeType: S
+        KeySchema:
+          - AttributeName: date
+            KeyType: HASH
     OuraHealthLogGroup:
       Type: AWS::Logs::LogGroup
       Properties:

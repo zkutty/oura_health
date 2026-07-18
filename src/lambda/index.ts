@@ -5,11 +5,13 @@ import {
   SQSEvent,
   ScheduledEvent 
 } from 'aws-lambda';
-import { SendMessageCommand, SQSClient } from '@aws-sdk/client-sqs';
+import { ChangeMessageVisibilityCommand, SendMessageCommand, SQSClient } from '@aws-sdk/client-sqs';
 import {
   ConditionalCheckFailedException,
   DynamoDBClient,
+  GetItemCommand,
   PutItemCommand,
+  UpdateItemCommand,
 } from '@aws-sdk/client-dynamodb';
 import { skillBuilder } from '../handlers/alexaHandlers';
 import { OuraService } from '../services/ouraService';
@@ -44,6 +46,19 @@ let ouraExportService: OuraExportService | null = null;
 let googleDocsOuraPublisher: GoogleDocsOuraPublisher | null = null;
 const sqs = new SQSClient({});
 const dynamoDb = new DynamoDBClient({});
+const REQUIRED_EXPORT_SECTIONS = ['sleep', 'readiness'] as const;
+const WEBHOOK_MAX_RETRIES = 5;
+const RECONCILIATION_LOOKBACK_DAYS = 7;
+
+interface OuraExportState {
+  date: string;
+  status: 'pending' | 'completed' | 'failed';
+  missingSections: string[];
+  lastEventType?: string;
+  lastEventObjectId?: string;
+  lastExportedAt?: string;
+  lastError?: string;
+}
 
 const webhookResponse = (statusCode: number, body: string): APIGatewayProxyResult => ({
   statusCode,
@@ -185,9 +200,169 @@ export const ouraWebhookReceiver = async (
 export const processOuraWebhook = async (event: SQSEvent): Promise<void> => {
   for (const record of event.Records) {
     const message = JSON.parse(record.body) as QueuedOuraWebhookEvent;
-    console.log(`Received queued Oura webhook event: ${message.event.event_type}/${message.event.data_type}.`);
+    try {
+      const date = await processOuraExportForEvent(message);
+      console.log(`Processed Oura webhook event for ${date}: ${message.event.data_type}.`);
+    } catch (error) {
+      const attempts = Number(record.attributes?.ApproximateReceiveCount || '1');
+      const delaySeconds = Math.min(60 * (2 ** Math.max(attempts - 1, 0)), 3600);
+      if (record.receiptHandle && attempts < WEBHOOK_MAX_RETRIES) {
+        await sqs.send(new ChangeMessageVisibilityCommand({
+          QueueUrl: process.env.OURA_WEBHOOK_QUEUE_URL,
+          ReceiptHandle: record.receiptHandle,
+          VisibilityTimeout: delaySeconds,
+        }));
+      }
+      console.error(`Oura webhook processing failed (attempt ${attempts}/${WEBHOOK_MAX_RETRIES}).`, error);
+      throw error;
+    }
   }
 };
+
+/** Rechecks recent Oura days so a missed webhook or delayed mobile sync self-heals. */
+export const reconcileOuraExports = async (): Promise<void> => {
+  initializeServices();
+  const dates = recentCalendarDates(RECONCILIATION_LOOKBACK_DAYS);
+  let completed = 0;
+  let pending = 0;
+
+  for (const date of dates) {
+    const existing = await getOuraExportState(date);
+    if (existing?.status === 'completed' && existing.missingSections.length === 0) {
+      continue;
+    }
+    const result = await processOuraExportForDate(date, { source: 'reconciliation' });
+    if (result.status === 'completed') completed++;
+    else pending++;
+  }
+
+  console.log(`Oura reconciliation finished: ${completed} complete, ${pending} pending across ${dates.length} day(s).`);
+};
+
+async function processOuraExportForEvent(message: QueuedOuraWebhookEvent): Promise<string> {
+  initializeServices();
+  if (!ouraService) throw new Error('Oura service is not initialized.');
+
+  const date = await ouraService.getDayForWebhookObject(message.event.data_type, message.event.object_id);
+  await processOuraExportForDate(date, {
+    source: 'webhook',
+    eventType: message.event.data_type,
+    eventObjectId: message.event.object_id,
+  });
+  return date;
+}
+
+async function processOuraExportForDate(
+  date: string,
+  context: { source: 'webhook' | 'reconciliation'; eventType?: string; eventObjectId?: string }
+): Promise<OuraExportState> {
+  initializeServices();
+  if (!ouraService || !ouraExportService || !googleDocsOuraPublisher) {
+    throw new Error('Oura export services are not initialized.');
+  }
+
+  const summary = await ouraService.getSummaryForDate(date);
+  const record = ouraExportService.toDailyExport(summary);
+  const missingRequiredSections = REQUIRED_EXPORT_SECTIONS.filter(section => record.derived.missing_sections.includes(section));
+
+  if (missingRequiredSections.length > 0) {
+    const state = await saveOuraExportState({
+      date,
+      status: 'pending',
+      missingSections: record.derived.missing_sections,
+      lastEventType: context.eventType,
+      lastEventObjectId: context.eventObjectId,
+    });
+    console.log(`Oura export for ${date} remains pending: ${missingRequiredSections.join(', ')} missing.`);
+    return state;
+  }
+
+  try {
+    const published = await googleDocsOuraPublisher.publish(record);
+    if (!published) throw new Error('Google Docs Oura publisher is not configured.');
+
+    const state = await saveOuraExportState({
+      date,
+      status: 'completed',
+      missingSections: record.derived.missing_sections,
+      lastEventType: context.eventType,
+      lastEventObjectId: context.eventObjectId,
+      lastExportedAt: new Date().toISOString(),
+    });
+    console.log(`Published complete Oura export for ${date}${published.updated ? ' (updated)' : ''}.`);
+    return state;
+  } catch (error) {
+    await saveOuraExportState({
+      date,
+      status: 'failed',
+      missingSections: record.derived.missing_sections,
+      lastEventType: context.eventType,
+      lastEventObjectId: context.eventObjectId,
+      lastError: error instanceof Error ? error.message : 'Unknown export failure',
+    });
+    throw error;
+  }
+}
+
+async function saveOuraExportState(state: OuraExportState): Promise<OuraExportState> {
+  const tableName = process.env.OURA_EXPORT_STATE_TABLE;
+  if (!tableName) throw new Error('OURA_EXPORT_STATE_TABLE is not configured.');
+
+  const updatedAt = new Date().toISOString();
+  await dynamoDb.send(new UpdateItemCommand({
+    TableName: tableName,
+    Key: { date: { S: state.date } },
+    UpdateExpression: 'SET #status = :status, missingSections = :missingSections, updatedAt = :updatedAt, lastEventType = :lastEventType, lastEventObjectId = :lastEventObjectId, lastExportedAt = :lastExportedAt, lastError = :lastError',
+    ExpressionAttributeNames: { '#status': 'status' },
+    ExpressionAttributeValues: {
+      ':status': { S: state.status },
+      ':missingSections': { SS: state.missingSections.length > 0 ? state.missingSections : ['none'] },
+      ':updatedAt': { S: updatedAt },
+      ':lastEventType': { S: state.lastEventType || '' },
+      ':lastEventObjectId': { S: state.lastEventObjectId || '' },
+      ':lastExportedAt': { S: state.lastExportedAt || '' },
+      ':lastError': { S: state.lastError || '' },
+    },
+  }));
+
+  return state;
+}
+
+async function getOuraExportState(date: string): Promise<OuraExportState | undefined> {
+  const tableName = process.env.OURA_EXPORT_STATE_TABLE;
+  if (!tableName) throw new Error('OURA_EXPORT_STATE_TABLE is not configured.');
+
+  const result = await dynamoDb.send(new GetItemCommand({
+    TableName: tableName,
+    Key: { date: { S: date } },
+    ConsistentRead: true,
+  }));
+  const item = result.Item;
+  if (!item) return undefined;
+
+  const missingSections = (item.missingSections?.SS || []).filter(section => section !== 'none');
+  const status = item.status?.S;
+  if (status !== 'pending' && status !== 'completed' && status !== 'failed') return undefined;
+  return {
+    date,
+    status,
+    missingSections,
+    lastEventType: item.lastEventType?.S || undefined,
+    lastEventObjectId: item.lastEventObjectId?.S || undefined,
+    lastExportedAt: item.lastExportedAt?.S || undefined,
+    lastError: item.lastError?.S || undefined,
+  };
+}
+
+function recentCalendarDates(days: number): string[] {
+  const dates: string[] = [];
+  for (let offset = 1; offset <= days; offset++) {
+    const date = new Date();
+    date.setUTCDate(date.getUTCDate() - offset);
+    dates.push(date.toISOString().split('T')[0]);
+  }
+  return dates;
+}
 
 /**
  * Lambda handler for scheduled morning automation (7 AM)

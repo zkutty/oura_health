@@ -1,0 +1,12 @@
+.git
+.github
+.serverless
+node_modules
+dist
+.env
+.env.*
+credentials
+exports
+*.log
+docs
+README.md

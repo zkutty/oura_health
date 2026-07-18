@@ -151,16 +151,26 @@ events for later work.
    npm run manage:oura-webhooks
    ```
 
-   The command subscribes to `sleep` and `daily_readiness` updates using the
-   configured callback URL. Oura verifies the GET endpoint during creation.
+   The command subscribes to `sleep`, `daily_readiness`, `daily_activity`, and
+   `daily_resilience` updates using the configured callback URL. Oura verifies
+   the GET endpoint during creation.
 
 4. Send an Oura test event and check CloudWatch for a generic queued-event log.
    Event payloads, signatures, client secrets, and verification tokens are never
    written to logs.
 
-The queue consumer currently receives the verified event only. `ZK-206` will
-fetch and export the changed day, preserving the webhook receiver's quick
-response path.
+The queue consumer fetches the exact day identified by each verified event. It
+does not publish a final entry until both sleep and readiness are present;
+later activity and resilience events replace the marked entry for that day.
+
+Once per day, a reconciliation Lambda rechecks the previous seven calendar
+days. This repairs missed webhooks, delayed mobile syncs, and failed exports
+without making polling the normal ingestion path. To re-export a particular
+day on demand, run:
+
+```bash
+npm run export:oura -- --date YYYY-MM-DD
+```
 
 ---
 

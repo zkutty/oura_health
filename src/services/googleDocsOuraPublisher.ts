@@ -19,17 +19,23 @@ export class GoogleDocsOuraPublisher {
   private readonly serviceAccountPrivateKey = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY?.replace(/\\n/g, '\n');
 
   isConfigured(): boolean {
-    return Boolean(this.documentId && this.serviceAccountEmail && this.serviceAccountPrivateKey);
+    return Boolean(this.documentId && (
+      (this.serviceAccountEmail && this.serviceAccountPrivateKey) ||
+      process.env.GOOGLE_USE_APPLICATION_DEFAULT_CREDENTIALS === 'true'
+    ));
   }
 
   async publish(record: OuraDailyExport): Promise<GoogleDocsOuraPublishResult | null> {
     if (!this.isConfigured()) return null;
 
-    const auth = new google.auth.JWT({
-      email: this.serviceAccountEmail,
-      key: this.serviceAccountPrivateKey,
-      scopes: ['https://www.googleapis.com/auth/documents'],
-    });
+    const scopes = ['https://www.googleapis.com/auth/documents'];
+    const auth = this.serviceAccountEmail && this.serviceAccountPrivateKey
+      ? new google.auth.JWT({
+          email: this.serviceAccountEmail,
+          key: this.serviceAccountPrivateKey,
+          scopes,
+        })
+      : new google.auth.GoogleAuth({ scopes });
     const docs = google.docs({ version: 'v1', auth });
     const document = (await docs.documents.get({ documentId: this.documentId! })).data;
     const entry = this.formatEntry(record);
