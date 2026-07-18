@@ -85,10 +85,13 @@ export class OuraExportService {
         deep_sleep_minutes: this.secondsToMinutes(summary.sleep?.deep_sleep_duration),
         rem_sleep_minutes: this.secondsToMinutes(summary.sleep?.rem_sleep_duration),
         sleep_efficiency: summary.sleep?.efficiency,
-        resting_heart_rate: summary.readiness?.resting_heart_rate,
+        resting_heart_rate: summary.readiness?.contributors?.resting_heart_rate
+          ?? summary.readiness?.resting_heart_rate,
         temperature_deviation: summary.readiness?.temperature_deviation,
-        hrv_balance: summary.readiness?.hrv_balance,
-        recovery_index: summary.readiness?.recovery_index,
+        hrv_balance: summary.readiness?.contributors?.hrv_balance
+          ?? summary.readiness?.hrv_balance,
+        recovery_index: summary.readiness?.contributors?.recovery_index
+          ?? summary.readiness?.recovery_index,
         steps: summary.activity?.steps,
         total_calories: summary.activity?.calories_total,
         active_calories: summary.activity?.active_calories,

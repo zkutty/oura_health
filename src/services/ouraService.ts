@@ -4,6 +4,7 @@ import { SecretManagerServiceClient } from '@google-cloud/secret-manager';
 export interface OuraSleepData {
   day: string;
   score: number;
+  type?: string;
   total_sleep_duration: number;
   deep_sleep_duration: number;
   rem_sleep_duration: number;
@@ -17,9 +18,14 @@ export interface OuraReadinessData {
   day: string;
   score: number;
   temperature_deviation: number;
-  resting_heart_rate: number;
-  hrv_balance: number;
-  recovery_index: number;
+  contributors?: {
+    resting_heart_rate?: number;
+    hrv_balance?: number;
+    recovery_index?: number;
+  };
+  resting_heart_rate?: number;
+  hrv_balance?: number;
+  recovery_index?: number;
 }
 
 export interface OuraActivityData {
@@ -192,16 +198,40 @@ export class OuraService {
 
   async getSleepData(startDate?: string, endDate?: string): Promise<OuraSleepData[]> {
     try {
-      const params: any = {};
-      if (startDate) params.start_date = startDate;
-      if (endDate) params.end_date = endDate;
+      const dailyParams: any = {};
+      const detailParams: any = {};
+      if (startDate) {
+        dailyParams.start_date = startDate;
+        detailParams.start_date = this.shiftDate(startDate, -1);
+      }
+      if (endDate) {
+        dailyParams.end_date = endDate;
+        detailParams.end_date = endDate;
+      }
 
-      console.log(`[OuraService] Fetching sleep data with params:`, params);
-      const response = await this.client.get('/usercollection/sleep', { params });
-      const data = response.data.data || [];
-      console.log(`[OuraService] Sleep API returned ${data.length} records`);
+      console.log(`[OuraService] Fetching daily sleep data with params:`, dailyParams);
+      const [dailyResponse, detailResponse] = await Promise.all([
+        this.client.get('/usercollection/daily_sleep', { params: dailyParams }),
+        this.client.get('/usercollection/sleep', { params: detailParams }),
+      ]);
+      const dailyRecords: any[] = dailyResponse.data.data || [];
+      const detailRecords: any[] = detailResponse.data.data || [];
+      console.log(`[OuraService] Sleep API returned ${dailyRecords.length} daily summaries and ${detailRecords.length} detailed records`);
 
-      return data;
+      return dailyRecords.map(dailyRecord => {
+        const matchingDetails = detailRecords
+          .filter(detail => this.getSleepRecoveryDay(detail) === dailyRecord.day)
+          .sort((left, right) => {
+            const typeDifference = Number(right.type === 'long_sleep') - Number(left.type === 'long_sleep');
+            return typeDifference || Number(right.total_sleep_duration || 0) - Number(left.total_sleep_duration || 0);
+          });
+        return {
+          ...(matchingDetails[0] || {}),
+          ...dailyRecord,
+          day: dailyRecord.day,
+          score: dailyRecord.score,
+        } as OuraSleepData;
+      });
     } catch (error: any) {
       console.error('Error fetching sleep data:', error.message);
       throw new Error('Failed to fetch sleep data from Oura');
@@ -447,10 +477,27 @@ export class OuraService {
     const records = await this.fetchCollection(dataType, startDate, endDate);
     const record = records.find((item: any) => item?.id === objectId);
 
-    if (!record || typeof record.day !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(record.day)) {
+    const recordDay = dataType === 'sleep' ? this.getSleepRecoveryDay(record) : record?.day;
+    if (!record || typeof recordDay !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(recordDay)) {
       throw new Error(`Unable to resolve Oura webhook object ${objectId} to a calendar day.`);
     }
-    return record.day;
+    return recordDay;
+  }
+
+  private getSleepRecoveryDay(record: any): string | undefined {
+    if (record?.type === 'long_sleep' && /^\d{4}-\d{2}-\d{2}$/.test(record?.day || '')) {
+      return this.shiftDate(record.day, 1);
+    }
+    const bedtimeEndDay = typeof record?.bedtime_end === 'string'
+      ? record.bedtime_end.slice(0, 10)
+      : undefined;
+    return /^\d{4}-\d{2}-\d{2}$/.test(bedtimeEndDay || '') ? bedtimeEndDay : record?.day;
+  }
+
+  private shiftDate(date: string, days: number): string {
+    const shifted = new Date(`${date}T12:00:00.000Z`);
+    shifted.setUTCDate(shifted.getUTCDate() + days);
+    return shifted.toISOString().split('T')[0];
   }
 
   async getYesterdaySummary(): Promise<OuraDailySummary> {

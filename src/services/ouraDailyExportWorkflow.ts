@@ -137,7 +137,7 @@ export class OuraDailyExportWorkflow {
 
 function recentCalendarDates(days: number): string[] {
   const dates: string[] = [];
-  for (let offset = 1; offset <= days; offset++) {
+  for (let offset = 0; offset < days; offset++) {
     const date = new Date();
     date.setUTCDate(date.getUTCDate() - offset);
     dates.push(date.toISOString().split('T')[0]);

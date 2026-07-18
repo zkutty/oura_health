@@ -13,6 +13,13 @@ interface TextRun {
   content: string;
 }
 
+interface OuraDocumentEntry {
+  date: string;
+  startIndex: number;
+  endIndex: number;
+  text: string;
+}
+
 export class GoogleDocsOuraPublisher {
   private readonly documentId = process.env.GOOGLE_OURA_DOCUMENT_ID;
   private readonly serviceAccountEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
@@ -39,28 +46,46 @@ export class GoogleDocsOuraPublisher {
     const docs = google.docs({ version: 'v1', auth });
     const document = (await docs.documents.get({ documentId: this.documentId! })).data;
     const entry = this.formatEntry(record);
-    const existingRange = this.findEntryRange(document, record.date);
-    const insertionIndex = existingRange?.startIndex ?? this.getDocumentEndIndex(document);
+    const existingEntries = this.findAllEntries(document);
+    const updated = existingEntries.some(existing => existing.date === record.date);
+    const sortedEntries = existingEntries
+      .filter(existing => existing.date !== record.date)
+      .map(existing => ({ date: existing.date, text: this.ensureTrailingNewline(existing.text) }));
+    sortedEntries.push({ date: record.date, text: entry });
+    sortedEntries.sort((left, right) => right.date.localeCompare(left.date));
+
+    const insertionIndex = existingEntries.length > 0
+      ? Math.min(...existingEntries.map(existing => existing.startIndex))
+      : this.getDocumentEndIndex(document);
+    const combinedText = sortedEntries.map(existing => existing.text).join('');
     const requests: any[] = [];
 
-    if (existingRange) requests.push({ deleteContentRange: { range: existingRange } });
-    requests.push({ insertText: { location: { index: insertionIndex }, text: entry } });
+    for (const existing of [...existingEntries].sort((left, right) => right.startIndex - left.startIndex)) {
+      requests.push({
+        deleteContentRange: { range: { startIndex: existing.startIndex, endIndex: existing.endIndex } },
+      });
+    }
+    requests.push({ insertText: { location: { index: insertionIndex }, text: combinedText } });
 
-    const titleStart = insertionIndex + this.openMarker(record.date).length + 1;
-    const titleEnd = titleStart + `Oura Daily Summary: ${record.date}`.length + 1;
-    requests.push({
-      updateParagraphStyle: {
-        range: { startIndex: titleStart, endIndex: titleEnd },
-        paragraphStyle: { namedStyleType: 'HEADING_2' },
-        fields: 'namedStyleType',
-      },
-    });
+    let entryStart = insertionIndex;
+    for (const sortedEntry of sortedEntries) {
+      const titleStart = entryStart + this.openMarker(sortedEntry.date).length + 1;
+      const titleEnd = titleStart + `Oura Daily Summary: ${sortedEntry.date}`.length + 1;
+      requests.push({
+        updateParagraphStyle: {
+          range: { startIndex: titleStart, endIndex: titleEnd },
+          paragraphStyle: { namedStyleType: 'HEADING_2' },
+          fields: 'namedStyleType',
+        },
+      });
+      entryStart += sortedEntry.text.length;
+    }
 
     await docs.documents.batchUpdate({ documentId: this.documentId!, requestBody: { requests } });
     return {
       documentId: this.documentId!,
       url: `https://docs.google.com/document/d/${this.documentId}/edit`,
-      updated: Boolean(existingRange),
+      updated,
     };
   }
 
@@ -104,6 +129,39 @@ export class GoogleDocsOuraPublisher {
     const endAfterMarker = close.startIndex + close.offset + closeMarker.length;
     const trailingNewline = close.content.slice(close.offset + closeMarker.length).startsWith('\n') ? 1 : 0;
     return { startIndex: open.startIndex + open.offset, endIndex: endAfterMarker + trailingNewline };
+  }
+
+  private findAllEntries(document: any): OuraDocumentEntry[] {
+    const runs = this.getTextRuns(document);
+    const dates = new Set<string>();
+    for (const run of runs) {
+      for (const match of run.content.matchAll(/\[oura:(\d{4}-\d{2}-\d{2})\]/g)) {
+        dates.add(match[1]);
+      }
+    }
+
+    return [...dates].map(date => {
+      const range = this.findEntryRange(document, date);
+      if (!range) throw new Error(`Could not resolve the marked Oura entry for ${date}.`);
+      return {
+        date,
+        ...range,
+        text: this.getTextForRange(runs, range.startIndex, range.endIndex),
+      };
+    }).sort((left, right) => left.startIndex - right.startIndex);
+  }
+
+  private getTextForRange(runs: TextRun[], startIndex: number, endIndex: number): string {
+    return runs.map(run => {
+      const overlapStart = Math.max(startIndex, run.startIndex);
+      const overlapEnd = Math.min(endIndex, run.endIndex);
+      if (overlapStart >= overlapEnd) return '';
+      return run.content.slice(overlapStart - run.startIndex, overlapEnd - run.startIndex);
+    }).join('');
+  }
+
+  private ensureTrailingNewline(text: string): string {
+    return text.endsWith('\n') ? text : `${text}\n`;
   }
 
   private getTextRuns(document: any): TextRun[] {
