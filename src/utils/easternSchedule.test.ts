@@ -41,8 +41,8 @@ describe('Eastern automation scheduling', () => {
 
   it('configures Cloud Scheduler in the New York time zone', () => {
     const deploymentScript = readFileSync(resolve(process.cwd(), 'scripts/deploy-gcp.sh'), 'utf8');
-    expect(deploymentScript).toContain("--schedule='15 8 * * *'");
-    expect(deploymentScript).toContain("--schedule='15 11 * * *'");
+    expect(deploymentScript).toContain("--schedule='0 7-10 * * *'");
+    expect(deploymentScript).toContain("--schedule='15 7-10 * * *'");
     expect(deploymentScript.match(/--time-zone='America\/New_York'/g)).toHaveLength(4);
   });
 });

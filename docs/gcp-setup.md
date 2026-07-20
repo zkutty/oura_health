@@ -91,14 +91,17 @@ for sleep, readiness, activity, and resilience.
 
 ## Operations
 
-Cloud Scheduler runs reconciliation at 11:15 AM America/New_York and checks the
-previous seven days. Complete days are skipped; missing, partial, and failed
-days are fetched again.
+Cloud Scheduler runs reconciliation at 7:00, 8:00, 9:00, and 10:00 AM
+America/New_York. Each run refreshes the current day and checks the previous
+seven days; completed historical days are skipped while missing, partial, and
+failed days are fetched again.
 
 The normal playlist path is event driven. When a completed export is produced,
 Cloud Tasks queues a separate playlist job. Firestore prevents concurrent or
-duplicate generation for the same date and input fingerprint. A scheduler at
-8:15 AM America/New_York queues a fallback using the same idempotent path.
+duplicate generation for the same date and input fingerprint. A paired fallback
+runs at 7:15, 8:15, 9:15, and 10:15 AM America/New_York, after each Oura check.
+If the ring syncs late or the scores materially change, a later pair picks up
+the new fingerprint; unchanged data does not rewrite the playlist.
 
 To re-export one day manually through the private worker:
 

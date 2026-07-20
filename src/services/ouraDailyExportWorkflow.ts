@@ -2,6 +2,7 @@ import { GoogleDocsOuraPublisher } from './googleDocsOuraPublisher';
 import { OuraExportService } from './ouraExportService';
 import { OuraService } from './ouraService';
 import { OuraWebhookEvent } from './ouraWebhookService';
+import { getEasternDate } from '../utils/easternSchedule';
 
 export type OuraExportStatus = 'pending' | 'completed' | 'failed';
 
@@ -108,9 +109,11 @@ export class OuraDailyExportWorkflow {
     let failed = 0;
     let skipped = 0;
 
-    for (const date of recentCalendarDates(days)) {
+    const dates = recentCalendarDates(days);
+    for (const [index, date] of dates.entries()) {
       const existing = await this.stateStore.get(date);
-      if (existing?.status === 'completed' && existing.missingSections.length === 0) {
+      const isCurrentEasternDay = index === 0;
+      if (!isCurrentEasternDay && existing?.status === 'completed' && existing.missingSections.length === 0) {
         skipped++;
         continue;
       }
@@ -137,9 +140,11 @@ export class OuraDailyExportWorkflow {
 
 function recentCalendarDates(days: number): string[] {
   const dates: string[] = [];
+  const [year, month, day] = getEasternDate(new Date()).split('-').map(Number);
+  const easternToday = new Date(Date.UTC(year, month - 1, day));
   for (let offset = 0; offset < days; offset++) {
-    const date = new Date();
-    date.setUTCDate(date.getUTCDate() - offset);
+    const date = new Date(easternToday);
+    date.setUTCDate(easternToday.getUTCDate() - offset);
     dates.push(date.toISOString().split('T')[0]);
   }
   return dates;

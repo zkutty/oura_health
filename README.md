@@ -130,7 +130,8 @@ and post-deployment Oura subscription step.
 2. A separate Cloud Task claims the date transactionally in Firestore
 3. It builds a deterministic music brief and gathers library tracks plus bounded search discoveries
 4. It ranks locally, caps each artist at three tracks, updates Spotify, and records the snapshot
-5. An 8:15 AM Eastern Cloud Scheduler fallback queues the same idempotent flow
+5. At 7:00, 8:00, 9:00, and 10:00 AM Eastern, reconciliation refreshes Oura data;
+   an idempotent playlist fallback follows each check 15 minutes later
 
 ### Throughout the Day
 - Manual control via REST API

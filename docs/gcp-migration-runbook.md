@@ -8,7 +8,7 @@
 | Oura webhook verification/receiver | `/oura-webhook` on the public service |
 | Oura SQS processor | Cloud Tasks to private `oura-health-worker` |
 | Oura reconciliation schedule | Cloud Scheduler to `/tasks/reconcile` |
-| Playlist generation and retry schedules | Event-driven Cloud Task plus 8:15 AM Eastern fallback |
+| Playlist generation and retry schedules | Event-driven Cloud Task plus 7:15–10:15 AM Eastern hourly fallbacks |
 | Morning and evening lighting schedules | Decommissioned: the configured Alexa routine provider is a stub; ZK-65 tracks a real provider |
 
 The AWS Lambda handler, Serverless configuration, DynamoDB/SQS/SSM clients, and

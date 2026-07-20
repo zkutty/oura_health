@@ -222,7 +222,7 @@ GCP_PLAYLIST_FALLBACK_URI="${GCP_WORKER_URL}/tasks/playlist-fallback"
 if gcloud scheduler jobs describe oura-export-reconciliation --location="${GCP_REGION}" >/dev/null 2>&1; then
   gcloud scheduler jobs update http oura-export-reconciliation \
     --location="${GCP_REGION}" \
-    --schedule='15 11 * * *' \
+    --schedule='0 7-10 * * *' \
     --time-zone='America/New_York' \
     --uri="${GCP_RECONCILIATION_URI}" \
     --http-method=POST \
@@ -233,7 +233,7 @@ if gcloud scheduler jobs describe oura-export-reconciliation --location="${GCP_R
 else
   gcloud scheduler jobs create http oura-export-reconciliation \
     --location="${GCP_REGION}" \
-    --schedule='15 11 * * *' \
+    --schedule='0 7-10 * * *' \
     --time-zone='America/New_York' \
     --uri="${GCP_RECONCILIATION_URI}" \
     --http-method=POST \
@@ -246,7 +246,7 @@ fi
 if gcloud scheduler jobs describe oura-playlist-fallback --location="${GCP_REGION}" >/dev/null 2>&1; then
   gcloud scheduler jobs update http oura-playlist-fallback \
     --location="${GCP_REGION}" \
-    --schedule='15 8 * * *' \
+    --schedule='15 7-10 * * *' \
     --time-zone='America/New_York' \
     --uri="${GCP_PLAYLIST_FALLBACK_URI}" \
     --http-method=POST \
@@ -257,7 +257,7 @@ if gcloud scheduler jobs describe oura-playlist-fallback --location="${GCP_REGIO
 else
   gcloud scheduler jobs create http oura-playlist-fallback \
     --location="${GCP_REGION}" \
-    --schedule='15 8 * * *' \
+    --schedule='15 7-10 * * *' \
     --time-zone='America/New_York' \
     --uri="${GCP_PLAYLIST_FALLBACK_URI}" \
     --http-method=POST \

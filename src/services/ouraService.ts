@@ -440,16 +440,20 @@ export class OuraService {
 
     // Oura's date filtering is more reliable over a small range than a
     // single-day request. Select the requested day's records after fetching.
-    const end = new Date(`${date}T12:00:00.000Z`);
-    const start = new Date(end);
+    const requestedDay = new Date(`${date}T12:00:00.000Z`);
+    const start = new Date(requestedDay);
     start.setUTCDate(start.getUTCDate() - 7);
     const startDate = start.toISOString().split('T')[0];
+    // Oura's daily collection end_date behaves as an exclusive boundary for
+    // date-specific activity queries. Fetch through the following day, then
+    // select only the requested date below.
+    const endDate = this.shiftDate(date, 1);
 
     const [sleepData, readinessData, activityData, resilienceData] = await Promise.all([
-      this.getSleepData(startDate, date),
-      this.getReadinessData(startDate, date),
-      this.getActivityData(startDate, date),
-      this.getResilienceData(startDate, date).catch((error) => {
+      this.getSleepData(startDate, endDate),
+      this.getReadinessData(startDate, endDate),
+      this.getActivityData(startDate, endDate),
+      this.getResilienceData(startDate, endDate).catch((error) => {
         console.warn(`[OuraService] Optional resilience data unavailable for ${date}: ${error.message}`);
         return [];
       }),

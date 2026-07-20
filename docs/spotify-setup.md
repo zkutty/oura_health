@@ -174,8 +174,9 @@ The system maps your Oura scores to 5 energy levels:
 
 Oura webhook processing queues playlist generation as soon as both sleep and
 readiness are available. Cloud Tasks retries transient failures, Firestore
-prevents concurrent or duplicate same-day writes, and an 8:15 AM Eastern Cloud
-Scheduler fallback queues the same idempotent path.
+prevents concurrent or duplicate same-day writes. Cloud Scheduler refreshes Oura
+at 7:00, 8:00, 9:00, and 10:00 AM Eastern, then queues the same idempotent
+playlist path 15 minutes after each check so late ring syncs are picked up.
 
 ### Track Selection Process
 

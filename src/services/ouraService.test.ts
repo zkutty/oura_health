@@ -59,4 +59,28 @@ describe('OuraService latest records', () => {
       activity: undefined,
     });
   });
+
+  it('queries through the following day so date-specific activity is included', async () => {
+    const service = new OuraService();
+    const get = vi.fn(async (url: string, options: { params: { start_date?: string; end_date?: string } }) => {
+      if (url === '/usercollection/daily_activity' && options.params.end_date === '2026-07-19') {
+        return { data: { data: [{ day: '2026-07-18', score: 78, steps: 4660 }] } };
+      }
+      if (url === '/usercollection/daily_sleep') {
+        return { data: { data: [{ day: '2026-07-18', score: 62 }] } };
+      }
+      if (url === '/usercollection/daily_readiness') {
+        return { data: { data: [{ day: '2026-07-18', score: 73 }] } };
+      }
+      return { data: { data: [] } };
+    });
+    (service as unknown as { client: { get: typeof get } }).client.get = get;
+
+    await expect(service.getSummaryForDate('2026-07-18')).resolves.toMatchObject({
+      activity: { day: '2026-07-18', score: 78, steps: 4660 },
+    });
+    expect(get).toHaveBeenCalledWith('/usercollection/daily_activity', {
+      params: { start_date: '2026-07-11', end_date: '2026-07-19' },
+    });
+  });
 });
