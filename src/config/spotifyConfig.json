@@ -3,15 +3,11 @@
   "targetPlaylistId": "0AIJNcDx5I2uHyjhdW824a",
   "targetPlaylistName": "Daily Health Mix",
   "playlistSize": 30,
-  "energyMappings": [
+  "wellnessMappings": [
     {
-      "level": "very_high",
-      "name": "Very High Energy (Peak Performance)",
-      "conditions": {
-        "readinessThreshold": 90,
-        "sleepThreshold": 90,
-        "combinedOperator": "and"
-      },
+      "band": 100,
+      "energyLevel": "very_high",
+      "name": "100 — Full Power",
       "audioFeatureTargets": {
         "energy": {
           "min": 0.7,
@@ -51,13 +47,9 @@
       ]
     },
     {
-      "level": "high",
-      "name": "High Energy (Active & Motivated)",
-      "conditions": {
-        "readinessThreshold": 85,
-        "sleepThreshold": 85,
-        "combinedOperator": "or"
-      },
+      "band": 90,
+      "energyLevel": "high",
+      "name": "90 — Active Drive",
       "audioFeatureTargets": {
         "energy": {
           "min": 0.6,
@@ -97,13 +89,9 @@
       ]
     },
     {
-      "level": "moderate",
-      "name": "Moderate Energy (Balanced & Steady)",
-      "conditions": {
-        "readinessThreshold": 75,
-        "sleepThreshold": 80,
-        "combinedOperator": "and"
-      },
+      "band": 80,
+      "energyLevel": "moderate",
+      "name": "80 — Balanced & Steady",
       "audioFeatureTargets": {
         "energy": {
           "min": 0.4,
@@ -143,13 +131,9 @@
       ]
     },
     {
-      "level": "low",
-      "name": "Low Energy (Calm & Comfortable)",
-      "conditions": {
-        "readinessThreshold": 70,
-        "sleepThreshold": 75,
-        "combinedOperator": "or"
-      },
+      "band": 70,
+      "energyLevel": "low",
+      "name": "70 — Calm Reset",
       "audioFeatureTargets": {
         "energy": {
           "min": 0.2,
@@ -189,13 +173,9 @@
       ]
     },
     {
-      "level": "very_low",
-      "name": "Very Low Energy (Rest & Recovery)",
-      "conditions": {
-        "readinessThreshold": 60,
-        "sleepThreshold": 70,
-        "combinedOperator": "or"
-      },
+      "band": 60,
+      "energyLevel": "very_low",
+      "name": "60 — Deep Recovery",
       "audioFeatureTargets": {
         "energy": {
           "min": 0,
@@ -234,12 +214,72 @@
         "soft",
         "soothing"
       ]
+    },
+    {
+      "band": 65,
+      "energyLevel": "very_low",
+      "name": "65 — Gentle Recovery",
+      "audioFeatureTargets": {
+        "energy": { "min": 0.1, "max": 0.35, "target": 0.22 },
+        "valence": { "min": 0.25, "max": 0.65, "target": 0.45 },
+        "tempo": { "min": 65, "max": 100, "target": 84 },
+        "acousticness": { "min": 0.35, "max": 1, "target": 0.65 }
+      },
+      "genres": ["ambient-pop", "acoustic", "neo-classical", "chill", "soft-rock"],
+      "moodKeywords": ["restorative", "gentle", "grounded", "warm", "unhurried"]
+    },
+    {
+      "band": 75,
+      "energyLevel": "low",
+      "name": "75 — Easy Momentum",
+      "audioFeatureTargets": {
+        "energy": { "min": 0.3, "max": 0.6, "target": 0.45 },
+        "valence": { "min": 0.4, "max": 0.75, "target": 0.57 },
+        "tempo": { "min": 90, "max": 120, "target": 105 },
+        "acousticness": { "min": 0.15, "max": 0.7, "target": 0.4 }
+      },
+      "genres": ["indie-pop", "soul", "folk-pop", "alternative", "chillwave"],
+      "moodKeywords": ["easygoing", "buoyant", "comfortable", "light", "flowing"]
+    },
+    {
+      "band": 85,
+      "energyLevel": "high",
+      "name": "85 — Bright Momentum",
+      "audioFeatureTargets": {
+        "energy": { "min": 0.5, "max": 0.8, "target": 0.65 },
+        "valence": { "min": 0.5, "max": 0.85, "target": 0.7 },
+        "tempo": { "min": 110, "max": 140, "target": 125 },
+        "acousticness": { "min": 0.05, "max": 0.45, "target": 0.2 }
+      },
+      "genres": ["dance-pop", "indie-dance", "funk", "electropop", "hip-hop"],
+      "moodKeywords": ["bright", "motivated", "confident", "upbeat", "driving"]
+    },
+    {
+      "band": 95,
+      "energyLevel": "very_high",
+      "name": "95 — Peak Focus",
+      "audioFeatureTargets": {
+        "energy": { "min": 0.65, "max": 0.95, "target": 0.82 },
+        "valence": { "min": 0.55, "max": 0.95, "target": 0.78 },
+        "tempo": { "min": 125, "max": 165, "target": 145 },
+        "acousticness": { "min": 0, "max": 0.25, "target": 0.08 }
+      },
+      "genres": ["electronic", "rock", "house", "drum-and-bass", "power-pop"],
+      "moodKeywords": ["focused", "charged", "bold", "triumphant", "propulsive"]
     }
   ],
   "sources": {
     "savedTracks": {
       "enabled": true,
       "weight": 0.4
+    },
+    "discoverWeeklyArchive": {
+      "enabled": true,
+      "playlistId": "",
+      "playlistName": "Discover Weekly Archive",
+      "weight": 0.75,
+      "maxTracks": 500,
+      "reservedRatio": 0.4
     },
     "userPlaylists": {
       "enabled": true,

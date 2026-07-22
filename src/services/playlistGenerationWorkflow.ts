@@ -76,6 +76,7 @@ export class PlaylistGenerationWorkflow {
         fingerprint,
         tracksAdded: generation.tracksAdded,
         energyLevel: generation.energyLevel,
+        wellnessBand: generation.wellnessBand,
         spotifySnapshotId: playlist.snapshot_id,
       }));
       return {

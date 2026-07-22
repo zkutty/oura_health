@@ -205,17 +205,25 @@ export class SpotifyService {
 
   async getUserPlaylists(): Promise<SpotifyPlaylist[]> {
     try {
-      const response = await this.client.get('/me/playlists', {
-        params: { limit: 50 },
-      });
-
-      return response.data.items.map((playlist: any) => ({
-        id: playlist.id,
-        name: playlist.name,
-        description: playlist.description || '',
-        items: playlist.items,
-        snapshot_id: playlist.snapshot_id,
-      }));
+      const playlists: SpotifyPlaylist[] = [];
+      let offset = 0;
+      let hasNext = true;
+      while (hasNext && playlists.length < 500) {
+        const response = await this.client.get('/me/playlists', {
+          params: { limit: 50, offset },
+        });
+        const page = response.data.items.map((playlist: any) => ({
+          id: playlist.id,
+          name: playlist.name,
+          description: playlist.description || '',
+          items: playlist.items,
+          snapshot_id: playlist.snapshot_id,
+        }));
+        playlists.push(...page);
+        offset += response.data.items.length;
+        hasNext = Boolean(response.data.next) && response.data.items.length > 0;
+      }
+      return playlists;
     } catch (error: any) {
       console.error('Error fetching user playlists:', error.message);
       throw this.apiError('Failed to fetch playlists from Spotify', error);

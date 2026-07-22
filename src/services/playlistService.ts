@@ -2,15 +2,13 @@ import { SpotifyApiError, SpotifyService, SpotifyTrack } from './spotifyService'
 import { OuraDailySummary } from './ouraService';
 
 export type EnergyLevel = 'very_low' | 'low' | 'moderate' | 'high' | 'very_high';
+export const WELLNESS_BANDS = [60, 65, 70, 75, 80, 85, 90, 95, 100] as const;
+export type WellnessBand = typeof WELLNESS_BANDS[number];
 
-export interface EnergyMapping {
-  level: EnergyLevel;
+export interface WellnessMapping {
+  band: WellnessBand;
+  energyLevel: EnergyLevel;
   name: string;
-  conditions: {
-    readinessThreshold: number;
-    sleepThreshold: number;
-    combinedOperator: 'and' | 'or';
-  };
   audioFeatureTargets: {
     energy: { min: number; max: number; target: number };
     valence: { min: number; max: number; target: number };
@@ -26,9 +24,17 @@ export interface PlaylistConfig {
   targetPlaylistId: string;
   targetPlaylistName: string;
   playlistSize: number;
-  energyMappings: EnergyMapping[];
+  wellnessMappings: WellnessMapping[];
   sources: {
     savedTracks: { enabled: boolean; weight: number };
+    discoverWeeklyArchive?: {
+      enabled: boolean;
+      playlistId?: string;
+      playlistName?: string;
+      weight: number;
+      maxTracks?: number;
+      reservedRatio: number;
+    };
     userPlaylists: {
       enabled: boolean;
       weight: number;
@@ -54,6 +60,7 @@ export interface PlaylistConfig {
 
 export interface DailyMusicBrief {
   energyLevel: EnergyLevel;
+  wellnessBand: WellnessBand;
   title: string;
   description: string;
   searchQueries: string[];
@@ -71,6 +78,7 @@ export interface PlaylistGenerationResult {
   playlistName: string;
   tracksAdded: number;
   energyLevel: EnergyLevel;
+  wellnessBand?: WellnessBand;
   ouraScores: {
     readiness?: number;
     sleep?: number;
@@ -84,6 +92,7 @@ export class PlaylistService {
   private spotifyService: SpotifyService;
   private config: PlaylistConfig | null = null;
   private currentEnergyLevel: EnergyLevel = 'moderate';
+  private currentWellnessBand: WellnessBand = 80;
 
   constructor(spotifyService: SpotifyService) {
     this.spotifyService = spotifyService;
@@ -128,10 +137,13 @@ export class PlaylistService {
     try {
       console.log('Starting playlist generation...');
 
-      // Step 1: Determine energy level
-      this.currentEnergyLevel = this.determineEnergyLevel(ouraData);
-      console.log(`Energy level determined: ${this.currentEnergyLevel}`);
-      const musicBrief = this.buildDailyMusicBrief(this.currentEnergyLevel);
+      // Step 1: Resolve the fine-grained wellness band used for music, while
+      // retaining the coarse energy level consumed by lighting integrations.
+      this.currentWellnessBand = this.determineWellnessBand(ouraData);
+      const wellnessMapping = this.getWellnessMapping(this.currentWellnessBand);
+      this.currentEnergyLevel = wellnessMapping.energyLevel;
+      console.log(`Wellness band determined: ${this.currentWellnessBand} (${this.currentEnergyLevel})`);
+      const musicBrief = this.buildDailyMusicBrief(this.currentWellnessBand);
       console.log(JSON.stringify({ event: 'daily_music_brief_created', ...musicBrief }));
 
       // Step 2: Collect tracks from all sources
@@ -145,6 +157,7 @@ export class PlaylistService {
           playlistName: this.config.targetPlaylistName,
           tracksAdded: 0,
           energyLevel: this.currentEnergyLevel,
+          wellnessBand: this.currentWellnessBand,
           ouraScores: {
             readiness: ouraData.readiness?.score,
             sleep: ouraData.sleep?.score,
@@ -155,7 +168,7 @@ export class PlaylistService {
       }
 
       // Step 3: Score and filter tracks
-      const scoredTracks = await this.filterAndScoreTracks(allTracks, this.currentEnergyLevel);
+      const scoredTracks = await this.filterAndScoreTracks(allTracks, this.currentWellnessBand);
       console.log(`Scored and filtered to ${scoredTracks.length} tracks`);
 
       if (scoredTracks.length === 0) {
@@ -165,6 +178,7 @@ export class PlaylistService {
           playlistName: this.config.targetPlaylistName,
           tracksAdded: 0,
           energyLevel: this.currentEnergyLevel,
+          wellnessBand: this.currentWellnessBand,
           ouraScores: {
             readiness: ouraData.readiness?.score,
             sleep: ouraData.sleep?.score,
@@ -188,6 +202,7 @@ export class PlaylistService {
         playlistName: this.config.targetPlaylistName,
         tracksAdded: selectedTracks.length,
         energyLevel: this.currentEnergyLevel,
+        wellnessBand: this.currentWellnessBand,
         ouraScores: {
           readiness: ouraData.readiness?.score,
           sleep: ouraData.sleep?.score,
@@ -204,6 +219,7 @@ export class PlaylistService {
         playlistName: this.config.targetPlaylistName,
         tracksAdded: 0,
         energyLevel: this.currentEnergyLevel,
+        wellnessBand: this.currentWellnessBand,
         ouraScores: {
           readiness: ouraData.readiness?.score,
           sleep: ouraData.sleep?.score,
@@ -215,44 +231,32 @@ export class PlaylistService {
   }
 
   /**
-   * Determine energy level based on Oura scores
+   * Average available readiness and sleep scores, constrain the result to the
+   * configured 60-100 range, then round down to a stable five-point band.
    */
-  private determineEnergyLevel(ouraData: OuraDailySummary): EnergyLevel {
+  private determineWellnessBand(ouraData: OuraDailySummary): WellnessBand {
     if (!this.config) {
-      return 'moderate';
+      return 80;
     }
 
-    const readinessScore = ouraData.readiness?.score ?? 0;
-    const sleepScore = ouraData.sleep?.score ?? 0;
-
-    console.log(`Oura scores - Readiness: ${readinessScore}, Sleep: ${sleepScore}`);
-
-    // Sort energy mappings from highest to lowest threshold
-    const sortedMappings = [...this.config.energyMappings].sort((a, b) => {
-      return b.conditions.readinessThreshold - a.conditions.readinessThreshold;
-    });
-
-    // Find the first matching energy level
-    for (const mapping of sortedMappings) {
-      const { readinessThreshold, sleepThreshold, combinedOperator } = mapping.conditions;
-
-      if (combinedOperator === 'and') {
-        if (readinessScore >= readinessThreshold && sleepScore >= sleepThreshold) {
-          console.log(`Matched energy level: ${mapping.level} (AND condition)`);
-          return mapping.level;
-        }
-      } else {
-        // 'or' operator
-        if (readinessScore >= readinessThreshold || sleepScore >= sleepThreshold) {
-          console.log(`Matched energy level: ${mapping.level} (OR condition)`);
-          return mapping.level;
-        }
-      }
+    const scores = [ouraData.readiness?.score, ouraData.sleep?.score]
+      .filter((score): score is number => typeof score === 'number' && Number.isFinite(score));
+    if (scores.length === 0) {
+      console.warn(JSON.stringify({ event: 'wellness_band_fallback', reason: 'missing_scores', wellnessBand: 80 }));
+      return 80;
     }
 
-    // Default to lowest energy level if no match
-    console.log('No match found, defaulting to very_low');
-    return 'very_low';
+    const combinedScore = scores.reduce((sum, score) => sum + score, 0) / scores.length;
+    const clampedScore = Math.min(100, Math.max(60, combinedScore));
+    const wellnessBand = (Math.floor(clampedScore / 5) * 5) as WellnessBand;
+    console.log(JSON.stringify({
+      event: 'wellness_band_resolved',
+      readiness: ouraData.readiness?.score,
+      sleep: ouraData.sleep?.score,
+      combinedScore,
+      wellnessBand,
+    }));
+    return wellnessBand;
   }
 
   /**
@@ -264,7 +268,10 @@ export class PlaylistService {
     }
 
     const tracksById = new Map<string, SpotifyTrack>();
+    const sourceCounts = new Map<string, number>();
     const addTrack = (track: SpotifyTrack, sourceTags: string[], sourceWeight: number) => {
+      const source = sourceTags[0];
+      sourceCounts.set(source, (sourceCounts.get(source) || 0) + 1);
       const existing = tracksById.get(track.id);
       if (existing) {
         existing.sourceTags = [...new Set([...(existing.sourceTags || []), ...sourceTags])];
@@ -290,16 +297,53 @@ export class PlaylistService {
       }
     }
 
-    // 2. Collect from user playlists
+    // 2. Prefer the user's Discover Weekly archive as its own source. Resolve
+    // by ID when configured, or by exact playlist name for portable setups.
+    const archive = this.config.sources.discoverWeeklyArchive;
+    let userPlaylists: Awaited<ReturnType<SpotifyService['getUserPlaylists']>> | undefined;
+    let archivePlaylistId: string | undefined;
+    if (archive?.enabled) {
+      try {
+        archivePlaylistId = archive.playlistId?.trim() || undefined;
+        if (!archivePlaylistId) {
+          userPlaylists = await this.spotifyService.getUserPlaylists();
+          const configuredName = (archive.playlistName || 'Discover Weekly Archive').trim().toLowerCase();
+          archivePlaylistId = userPlaylists.find(playlist => playlist.name.trim().toLowerCase() === configuredName)?.id;
+        }
+        if (!archivePlaylistId) {
+          throw new Error(`Playlist not found: ${archive.playlistName || 'Discover Weekly Archive'}`);
+        }
+        const archiveTracks = await this.spotifyService.getPlaylistTracks(
+          archivePlaylistId,
+          archive.maxTracks ?? 500
+        );
+        archiveTracks.forEach(track => addTrack(
+          track,
+          ['discover-weekly-archive', 'archive', 'discover-weekly'],
+          archive.weight
+        ));
+        console.log(JSON.stringify({
+          event: 'spotify_source_collected',
+          source: 'discover_weekly_archive',
+          playlistId: archivePlaylistId,
+          tracks: archiveTracks.length,
+        }));
+      } catch (error: any) {
+        this.logSourceDegradation('discover_weekly_archive', error);
+      }
+    }
+
+    // 3. Collect from user playlists
     if (this.config.sources.userPlaylists.enabled) {
       try {
         console.log('Collecting tracks from user playlists...');
-        const playlists = await this.spotifyService.getUserPlaylists();
+        const playlists = userPlaylists ?? await this.spotifyService.getUserPlaylists();
         const excludeIds = [
           ...this.config.sources.userPlaylists.excludeIds,
           this.config.targetPlaylistId, // Always exclude target playlist
+          ...(archivePlaylistId ? [archivePlaylistId] : []),
         ];
-        const mapping = this.getEnergyMappingForLevel(this.currentEnergyLevel);
+        const mapping = this.getWellnessMapping(this.currentWellnessBand);
         const desiredTerms = [...mapping.genres, ...mapping.moodKeywords]
           .map(value => value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim());
         const maxPlaylists = this.config.sources.userPlaylists.maxPlaylists ?? 10;
@@ -339,7 +383,7 @@ export class PlaylistService {
       }
     }
 
-    // 3. Add bounded discoveries from Spotify search. Search results stay local;
+    // 4. Add bounded discoveries from Spotify search. Search results stay local;
     // no Spotify or Oura data is sent to an AI service.
     if (this.config.sources.search?.enabled) {
       const search = this.config.sources.search;
@@ -354,6 +398,7 @@ export class PlaylistService {
       }
     }
 
+    console.log(JSON.stringify({ event: 'spotify_source_summary', counts: Object.fromEntries(sourceCounts) }));
     return [...tracksById.values()];
   }
 
@@ -362,14 +407,14 @@ export class PlaylistService {
    * Playlist names/descriptions supply energy and mood hints; source weighting
    * and a deterministic ID tie-break provide stable fallbacks.
    */
-  private async filterAndScoreTracks(tracks: SpotifyTrack[], energyLevel: EnergyLevel): Promise<ScoredTrack[]> {
+  private async filterAndScoreTracks(tracks: SpotifyTrack[], wellnessBand: WellnessBand): Promise<ScoredTrack[]> {
     if (!this.config) {
       return [];
     }
 
-    const energyMapping = this.getEnergyMappingForLevel(energyLevel);
+    const wellnessMapping = this.getWellnessMapping(wellnessBand);
     const normalize = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
-    const desiredKeywords = [...energyMapping.genres, ...energyMapping.moodKeywords]
+    const desiredKeywords = [...wellnessMapping.genres, ...wellnessMapping.moodKeywords]
       .map(normalize);
 
     return tracks.map(track => {
@@ -397,8 +442,19 @@ export class PlaylistService {
     const maxPerArtist = 3;
     const discoveryRatio = Math.min(0.5, Math.max(0, this.config?.sources.search?.discoveryRatio ?? 0.3));
     const discoveryTarget = Math.round(targetCount * discoveryRatio);
-    const libraryTarget = targetCount - discoveryTarget;
-    const library = scoredTracks.filter(item => !item.track.sourceTags?.includes('discovery'));
+    const archive = scoredTracks.filter(item => item.track.sourceTags?.includes('discover-weekly-archive'));
+    const archiveRatio = Math.min(1 - discoveryRatio, Math.max(
+      0,
+      this.config?.sources.discoverWeeklyArchive?.enabled
+        ? this.config.sources.discoverWeeklyArchive.reservedRatio
+        : 0
+    ));
+    const archiveTarget = archive.length > 0 ? Math.round(targetCount * archiveRatio) : 0;
+    const libraryTarget = targetCount - discoveryTarget - archiveTarget;
+    const library = scoredTracks.filter(item =>
+      !item.track.sourceTags?.includes('discovery')
+      && !item.track.sourceTags?.includes('discover-weekly-archive')
+    );
     const discovery = scoredTracks.filter(item => item.track.sourceTags?.includes('discovery'));
 
     const selectFrom = (pool: ScoredTrack[], limit: number) => {
@@ -414,22 +470,33 @@ export class PlaylistService {
       }
     };
 
+    selectFrom(archive, archiveTarget);
     selectFrom(library, libraryTarget);
     selectFrom(discovery, discoveryTarget);
+    selectFrom(library, targetCount - selected.length);
     selectFrom(scoredTracks, targetCount - selected.length);
 
+    console.log(JSON.stringify({
+      event: 'spotify_selection_summary',
+      targetCount,
+      archiveTarget,
+      archiveSelected: selected.filter(track => track.sourceTags?.includes('discover-weekly-archive')).length,
+      discoveryTarget,
+      selected: selected.length,
+    }));
     return selected;
   }
 
-  buildDailyMusicBrief(energyLevel: EnergyLevel): DailyMusicBrief {
-    const mapping = this.getEnergyMappingForLevel(energyLevel);
+  buildDailyMusicBrief(wellnessBand: WellnessBand): DailyMusicBrief {
+    const mapping = this.getWellnessMapping(wellnessBand);
     const maxQueries = Math.max(0, this.config?.sources.search?.maxQueries ?? 4);
     const genres = mapping.genres.slice(0, 3);
     const moods = mapping.moodKeywords.slice(0, 3);
     const searchQueries = genres.map((genre, index) => `${genre} ${moods[index % moods.length]}`)
       .slice(0, maxQueries);
     return {
-      energyLevel,
+      energyLevel: mapping.energyLevel,
+      wellnessBand,
       title: mapping.name,
       description: `${mapping.name}: ${moods.join(', ')} music with ${genres.join(', ')} influences.`,
       searchQueries,
@@ -449,16 +516,16 @@ export class PlaylistService {
   }
 
   /**
-   * Helper to get energy mapping configuration for a specific level
+   * Helper to get music metadata for a five-point wellness band.
    */
-  private getEnergyMappingForLevel(level: EnergyLevel): EnergyMapping {
+  private getWellnessMapping(band: WellnessBand): WellnessMapping {
     if (!this.config) {
       throw new Error('Playlist configuration not loaded');
     }
 
-    const mapping = this.config.energyMappings.find(m => m.level === level);
+    const mapping = this.config.wellnessMappings.find(m => m.band === band);
     if (!mapping) {
-      throw new Error(`Energy mapping not found for level: ${level}`);
+      throw new Error(`Wellness mapping not found for band: ${band}`);
     }
 
     return mapping;

@@ -8,7 +8,7 @@ The Spotify integration creates a "Daily Health Mix" playlist that adapts to you
 - **High readiness/sleep** → Energetic, upbeat music
 - **Low readiness/sleep** → Calming, relaxing music
 - **Automatic daily updates** at 7:45 AM with smart retry logic
-- **Music from supported sources**: Your saved tracks and your own playlists
+- **Music from supported sources**: Your Discover Weekly archive, saved tracks, playlists, and bounded Spotify search
 
 ## Prerequisites
 
@@ -158,17 +158,30 @@ curl http://localhost:3000/spotify/config
 
 ## How It Works
 
-### Energy Level Mapping
+### Wellness-band mapping
 
-The system maps your Oura scores to 5 energy levels:
+The playlist pipeline averages the available sleep and readiness scores, clamps
+the result to 60–100, and rounds down to a 5-point band. For example, sleep 89
+and readiness 90 resolve to band 85; scores below 60 resolve to 60. If only one
+score is available it is used directly, and if neither is available the neutral
+fallback is 80.
 
-| Energy Level | Conditions | Preferred metadata |
-|-------------|-----------|--------------------|
-| **Very High** | Readiness ≥90 AND Sleep ≥90 | Rock, EDM, intense, power |
-| **High** | Readiness ≥85 OR Sleep ≥85 | Dance, electronic, energetic, uplifting |
-| **Moderate** | Readiness ≥75 AND Sleep ≥80 | Indie pop, alternative, positive, balanced |
-| **Low** | Readiness ≥70 OR Sleep ≥75 | Folk, jazz, mellow, chill |
-| **Very Low** | Below the configured thresholds | Ambient, acoustic, calm, soothing |
+Each band has its own configurable music profile:
+
+| Band | Music mood |
+|------|------------|
+| **60** | Deep recovery |
+| **65** | Gentle recovery |
+| **70** | Calm reset |
+| **75** | Easy momentum |
+| **80** | Balanced and steady |
+| **85** | Bright momentum |
+| **90** | Active drive |
+| **95** | Peak focus |
+| **100** | Full power |
+
+The existing five energy labels remain attached to these bands for lighting and
+Alexa compatibility, but song selection uses the finer wellness profile.
 
 ### Event-driven generation and retry
 
@@ -181,6 +194,7 @@ playlist path 15 minutes after each check so late ring syncs are picked up.
 ### Track Selection Process
 
 1. **Collect tracks** from supported enabled sources:
+   - The configured Discover Weekly archive (preferred 40% share by default)
    - Your saved/liked songs (40% weight)
    - Up to 10 of your most metadata-relevant playlists, with up to 100 tracks from each (30% weight)
    - Up to four Spotify searches with up to 10 tracks each for discoveries
@@ -191,8 +205,10 @@ playlist path 15 minutes after each check so late ring syncs are picked up.
    - Stable track-ID ordering for ties (Spotify removed track popularity from development-mode responses)
 
 3. **Build a hybrid mix**:
-   - Approximately 70% library tracks and 30% search discoveries
+   - Prefer the configured share of matching Discover Weekly archive tracks
+   - Reserve approximately 30% for search discoveries and fill remaining slots from the library
    - Maximum three tracks per artist
+   - Deduplicate tracks across archive, saved tracks, playlists, and search
    - All scoring remains local; Spotify data is never sent to an AI service
 
 4. **Select top 30 tracks** with highest scores
@@ -201,24 +217,23 @@ playlist path 15 minutes after each check so late ring syncs are picked up.
 
 ## Customization
 
-### Adjust Energy Thresholds
+### Adjust wellness moods
 
-Edit `src/config/spotifyConfig.json` to change when each energy level activates:
+Edit `src/config/spotifyConfig.json` to tune each five-point band's mood:
 
 ```json
 {
-  "level": "high",
-  "conditions": {
-    "readinessThreshold": 85,  // Change this
-    "sleepThreshold": 85,       // Change this
-    "combinedOperator": "or"    // "and" or "or"
-  }
+  "band": 85,
+  "energyLevel": "high",
+  "name": "85 — Bright Momentum",
+  "genres": ["dance-pop", "indie-dance", "funk"],
+  "moodKeywords": ["bright", "motivated", "confident"]
 }
 ```
 
 ### Modify Music Metadata Targets
 
-Edit each energy mapping's `genres` and `moodKeywords`. These values are matched against playlist names/descriptions, track names, and artist names.
+Edit each wellness mapping's `genres` and `moodKeywords`. These values are matched against playlist names/descriptions, track names, and artist names.
 
 ### Change Playlist Size
 
@@ -237,6 +252,29 @@ Prefer certain music sources over others:
   "sources": {
     "savedTracks": { "enabled": true, "weight": 0.5 },
     "userPlaylists": { "enabled": true, "weight": 0.3, "excludeIds": [] }
+  }
+}
+```
+
+### Configure the Discover Weekly archive
+
+By default the pipeline looks for a user playlist named exactly
+`Discover Weekly Archive`. For a renamed archive—or to avoid name lookup—set its
+Spotify playlist ID directly. The reserved ratio is applied before normal
+library fill and is automatically released when the archive has too few usable
+tracks or cannot be reached.
+
+```json
+{
+  "sources": {
+    "discoverWeeklyArchive": {
+      "enabled": true,
+      "playlistId": "your_archive_playlist_id",
+      "playlistName": "Discover Weekly Archive",
+      "weight": 0.75,
+      "maxTracks": 500,
+      "reservedRatio": 0.4
+    }
   }
 }
 ```
